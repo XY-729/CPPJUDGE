@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/cppjudge.dir/src/main.cpp.o CMakeFiles/cppjudge.dir/src/judge.cpp.o CMakeFiles/cppjudge.dir/src/compiler.cpp.o CMakeFiles/cppjudge.dir/src/runner.cpp.o CMakeFiles/cppjudge.dir/src/comparer.cpp.o -o cppjudge 
