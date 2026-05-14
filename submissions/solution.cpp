@@ -2,11 +2,10 @@
 using namespace std;
 
 int main() {
-    vector<int*> v;
+    vector<vector<int>> v;
 
     while (true) {
-        int* p = new int[1024 * 1024];
-        v.push_back(p);
+        v.emplace_back(1024 * 1024, 1); // 每次真实写入约 4MB
     }
 
     return 0;

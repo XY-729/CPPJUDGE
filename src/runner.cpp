@@ -159,7 +159,12 @@ RunInfo run_program(
         }
 
         if (memory_limit_mb > 0) {
-            long long memory_bytes = 1LL * memory_limit_mb * 1024 * 1024;
+            // 不能直接把 RLIMIT_AS 设成题目的内存限制。
+            // 动态链接的 C++ 程序启动时需要额外虚拟地址空间；
+            // 16MB 这种限制太小会导致 execl / 动态链接阶段失败，最后被误判成 RE。
+            int address_space_limit_mb = memory_limit_mb + 256;
+
+            long long memory_bytes = 1LL * address_space_limit_mb * 1024 * 1024;
             set_limit_or_exit(RLIMIT_AS, memory_bytes);
         }
 
