@@ -1,0 +1,38 @@
+{
+    "final_verdict": "Accepted",
+    "passed": 5,
+    "results": [
+        {
+            "case": "1",
+            "memory_mb": 64,
+            "time_ms": 5,
+            "verdict": "AC"
+        },
+        {
+            "case": "2",
+            "memory_mb": 64,
+            "time_ms": 5,
+            "verdict": "AC"
+        },
+        {
+            "case": "3",
+            "memory_mb": 64,
+            "time_ms": 5,
+            "verdict": "AC"
+        },
+        {
+            "case": "4",
+            "memory_mb": 64,
+            "time_ms": 5,
+            "verdict": "AC"
+        },
+        {
+            "case": "5",
+            "memory_mb": 64,
+            "time_ms": 5,
+            "verdict": "AC"
+        }
+    ],
+    "submission": "submissions/solution.cpp",
+    "total": 5
+}

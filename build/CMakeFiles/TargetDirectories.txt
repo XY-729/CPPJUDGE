@@ -1,0 +1,3 @@
+/home/xiyuan729/cppjudge/build/CMakeFiles/cppjudge.dir
+/home/xiyuan729/cppjudge/build/CMakeFiles/edit_cache.dir
+/home/xiyuan729/cppjudge/build/CMakeFiles/rebuild_cache.dir
