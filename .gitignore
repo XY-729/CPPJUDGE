@@ -27,3 +27,4 @@ Makefile
 *.swo
 *.DS_Store
 *.vscode/
+.vs/

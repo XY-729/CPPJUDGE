@@ -18,6 +18,7 @@ const std::string JUDGE_LOG_FILE = BUILD_DIR + "/judge_log.json";
 const int TIME_LIMIT_MS = 1000;
 const int MEMORY_LIMIT_MB = 128;
 const int OUTPUT_LIMIT_MB = 1;
+const int COMPILE_TIME_LIMIT_MS = 5000;
 
 const double FLOAT_ABS_EPS = 1e-6;
 const double FLOAT_REL_EPS = 1e-6;

@@ -29,6 +29,17 @@ enum class FinalVerdict {
     CE
 };
 
+struct ProblemConfig {
+    std::string title = PROBLEM_NAME;
+    int time_limit_ms = TIME_LIMIT_MS;
+    int memory_limit_mb = MEMORY_LIMIT_MB;
+    int output_limit_mb = OUTPUT_LIMIT_MB;
+    int compile_time_limit_ms = COMPILE_TIME_LIMIT_MS;
+    CompareMode compare_mode = CompareMode::FLOATING;
+    double float_abs_eps = FLOAT_ABS_EPS;
+    double float_rel_eps = FLOAT_REL_EPS;
+};
+
 static std::string final_verdict_to_string(FinalVerdict verdict) {
     switch (verdict) {
         case FinalVerdict::AC:
@@ -80,6 +91,39 @@ static std::string read_text_file(const std::string& file_path) {
     return buffer.str();
 }
 
+static ProblemConfig load_problem_config(const std::string& problem_dir) {
+    ProblemConfig config;
+    fs::path config_path = fs::path(problem_dir) / "problem.json";
+
+    if (!fs::exists(config_path)) {
+        return config;
+    }
+
+    std::ifstream config_file(config_path);
+    if (!config_file.is_open()) {
+        return config;
+    }
+
+    json problem_json;
+    config_file >> problem_json;
+
+    config.title = problem_json.value("title", config.title);
+    config.time_limit_ms = problem_json.value("time_limit_ms", config.time_limit_ms);
+    config.memory_limit_mb = problem_json.value("memory_limit_mb", config.memory_limit_mb);
+    config.output_limit_mb = problem_json.value("output_limit_mb", config.output_limit_mb);
+    config.compile_time_limit_ms = problem_json.value(
+        "compile_time_limit_ms",
+        config.compile_time_limit_ms
+    );
+    config.compare_mode = compare_mode_from_string(
+        problem_json.value("compare_mode", compare_mode_to_string(config.compare_mode))
+    );
+    config.float_abs_eps = problem_json.value("float_abs_eps", config.float_abs_eps);
+    config.float_rel_eps = problem_json.value("float_rel_eps", config.float_rel_eps);
+
+    return config;
+}
+
 static void write_log_file(const json& log_json) {
     fs::create_directories(BUILD_DIR);
 
@@ -91,10 +135,6 @@ void judge(int argc, char* argv[]) {
     std::string submission_file = SUBMISSION_FILE;
     std::string problem_dir = PROBLEM_DIR;
 
-    int time_limit = TIME_LIMIT_MS;
-    int memory_limit = MEMORY_LIMIT_MB;
-    int output_limit = OUTPUT_LIMIT_MB;
-
     if (argc > 1) {
         submission_file = argv[1];
     }
@@ -103,16 +143,26 @@ void judge(int argc, char* argv[]) {
         problem_dir = argv[2];
     }
 
+    ProblemConfig problem_config = load_problem_config(problem_dir);
+
     if (argc > 3) {
-        time_limit = std::stoi(argv[3]);
+        problem_config.time_limit_ms = std::stoi(argv[3]);
     }
 
     if (argc > 4) {
-        memory_limit = std::stoi(argv[4]);
+        problem_config.memory_limit_mb = std::stoi(argv[4]);
     }
 
     if (argc > 5) {
-        output_limit = std::stoi(argv[5]);
+        problem_config.output_limit_mb = std::stoi(argv[5]);
+    }
+
+    if (argc > 6) {
+        problem_config.compare_mode = compare_mode_from_string(argv[6]);
+    }
+
+    if (argc > 7) {
+        problem_config.compile_time_limit_ms = std::stoi(argv[7]);
     }
 
     std::string input_dir = problem_dir + "/input";
@@ -125,12 +175,13 @@ void judge(int argc, char* argv[]) {
 
     log_json["submission"] = submission_file;
     log_json["problem_dir"] = problem_dir;
-    log_json["time_limit_ms"] = time_limit;
-    log_json["memory_limit_mb"] = memory_limit;
-    log_json["output_limit_mb"] = output_limit;
-    log_json["compare_mode"] = "floating";
-    log_json["float_abs_eps"] = FLOAT_ABS_EPS;
-    log_json["float_rel_eps"] = FLOAT_REL_EPS;
+    log_json["time_limit_ms"] = problem_config.time_limit_ms;
+    log_json["memory_limit_mb"] = problem_config.memory_limit_mb;
+    log_json["output_limit_mb"] = problem_config.output_limit_mb;
+    log_json["compile_time_limit_ms"] = problem_config.compile_time_limit_ms;
+    log_json["compare_mode"] = compare_mode_to_string(problem_config.compare_mode);
+    log_json["float_abs_eps"] = problem_config.float_abs_eps;
+    log_json["float_rel_eps"] = problem_config.float_rel_eps;
     log_json["results"] = json::array();
 
     if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
@@ -138,6 +189,8 @@ void judge(int argc, char* argv[]) {
 
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
         log_json["error"] = "Input directory not found: " + input_dir;
+        log_json["passed"] = 0;
+        log_json["total"] = 0;
 
         write_log_file(log_json);
         return;
@@ -148,6 +201,8 @@ void judge(int argc, char* argv[]) {
 
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
         log_json["error"] = "Output directory not found: " + output_dir;
+        log_json["passed"] = 0;
+        log_json["total"] = 0;
 
         write_log_file(log_json);
         return;
@@ -156,7 +211,8 @@ void judge(int argc, char* argv[]) {
     bool compile_ok = compile_cpp(
         submission_file,
         EXECUTABLE_FILE,
-        COMPILE_ERROR_FILE
+        COMPILE_ERROR_FILE,
+        problem_config.compile_time_limit_ms
     );
 
     if (!compile_ok) {
@@ -218,9 +274,9 @@ void judge(int argc, char* argv[]) {
             EXECUTABLE_FILE,
             input_path.string(),
             user_output_file,
-            time_limit,
-            memory_limit,
-            output_limit
+            problem_config.time_limit_ms,
+            problem_config.memory_limit_mb,
+            problem_config.output_limit_mb
         );
 
         case_json["time_ms"] = run_info.time_ms;
@@ -233,11 +289,12 @@ void judge(int argc, char* argv[]) {
                 final_verdict = run_result_to_final_verdict(run_info.result);
             }
         } else {
-            bool same = compare_output_floating(
+            bool same = compare_output(
                 user_output_file,
                 standard_output_file,
-                FLOAT_ABS_EPS,
-                FLOAT_REL_EPS
+                problem_config.compare_mode,
+                problem_config.float_abs_eps,
+                problem_config.float_rel_eps
             );
 
             if (same) {
