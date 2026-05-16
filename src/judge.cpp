@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -131,6 +132,29 @@ static void write_log_file(const json& log_json) {
     log_file << std::setw(4) << log_json << std::endl;
 }
 
+static bool parse_int_arg(
+    const char* value,
+    const std::string& name,
+    int& target,
+    std::string& error
+) {
+    try {
+        size_t parsed_chars = 0;
+        int parsed_value = std::stoi(value, &parsed_chars);
+
+        if (parsed_chars != std::string(value).size()) {
+            error = "Invalid integer for " + name + ": " + value;
+            return false;
+        }
+
+        target = parsed_value;
+        return true;
+    } catch (const std::exception&) {
+        error = "Invalid integer for " + name + ": " + value;
+        return false;
+    }
+}
+
 void judge(int argc, char* argv[]) {
     std::string submission_file = SUBMISSION_FILE;
     std::string problem_dir = PROBLEM_DIR;
@@ -145,24 +169,46 @@ void judge(int argc, char* argv[]) {
 
     ProblemConfig problem_config = load_problem_config(problem_dir);
 
-    if (argc > 3) {
-        problem_config.time_limit_ms = std::stoi(argv[3]);
+    std::string argument_error;
+
+    if (argc > 3 && !parse_int_arg(
+        argv[3],
+        "time_limit_ms",
+        problem_config.time_limit_ms,
+        argument_error
+    )) {
+        // handled after log_json is initialized
     }
 
-    if (argc > 4) {
-        problem_config.memory_limit_mb = std::stoi(argv[4]);
+    if (argument_error.empty() && argc > 4 && !parse_int_arg(
+        argv[4],
+        "memory_limit_mb",
+        problem_config.memory_limit_mb,
+        argument_error
+    )) {
+        // handled after log_json is initialized
     }
 
-    if (argc > 5) {
-        problem_config.output_limit_mb = std::stoi(argv[5]);
+    if (argument_error.empty() && argc > 5 && !parse_int_arg(
+        argv[5],
+        "output_limit_mb",
+        problem_config.output_limit_mb,
+        argument_error
+    )) {
+        // handled after log_json is initialized
     }
 
     if (argc > 6) {
         problem_config.compare_mode = compare_mode_from_string(argv[6]);
     }
 
-    if (argc > 7) {
-        problem_config.compile_time_limit_ms = std::stoi(argv[7]);
+    if (argument_error.empty() && argc > 7 && !parse_int_arg(
+        argv[7],
+        "compile_time_limit_ms",
+        problem_config.compile_time_limit_ms,
+        argument_error
+    )) {
+        // handled after log_json is initialized
     }
 
     std::string input_dir = problem_dir + "/input";
@@ -208,6 +254,40 @@ void judge(int argc, char* argv[]) {
         return;
     }
 
+    if (!argument_error.empty()) {
+        std::cout << argument_error << std::endl;
+
+        log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
+        log_json["error"] = argument_error;
+        log_json["passed"] = 0;
+        log_json["total"] = 0;
+
+        write_log_file(log_json);
+        return;
+    }
+
+    std::vector<fs::path> input_files;
+
+    for (const auto& entry : fs::directory_iterator(input_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".in") {
+            input_files.push_back(entry.path());
+        }
+    }
+
+    std::sort(input_files.begin(), input_files.end());
+
+    if (input_files.empty()) {
+        std::cout << "No input files found in: " << input_dir << std::endl;
+
+        log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
+        log_json["error"] = "No input files found in: " + input_dir;
+        log_json["passed"] = 0;
+        log_json["total"] = 0;
+
+        write_log_file(log_json);
+        return;
+    }
+
     bool compile_ok = compile_cpp(
         submission_file,
         EXECUTABLE_FILE,
@@ -229,16 +309,6 @@ void judge(int argc, char* argv[]) {
         write_log_file(log_json);
         return;
     }
-
-    std::vector<fs::path> input_files;
-
-    for (const auto& entry : fs::directory_iterator(input_dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".in") {
-            input_files.push_back(entry.path());
-        }
-    }
-
-    std::sort(input_files.begin(), input_files.end());
 
     int accepted = 0;
     FinalVerdict final_verdict = FinalVerdict::AC;
