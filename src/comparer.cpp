@@ -82,6 +82,13 @@ bool almost_equal(
 
 } // namespace
 
+bool is_valid_compare_mode(const std::string& mode) {
+    std::string normalized = to_lower(mode);
+    return normalized == "exact" ||
+           normalized == "floating" ||
+           normalized == "float";
+}
+
 CompareMode compare_mode_from_string(const std::string& mode) {
     std::string normalized = to_lower(mode);
 

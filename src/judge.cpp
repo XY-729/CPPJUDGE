@@ -92,7 +92,10 @@ static std::string read_text_file(const std::string& file_path) {
     return buffer.str();
 }
 
-static ProblemConfig load_problem_config(const std::string& problem_dir) {
+static ProblemConfig load_problem_config(
+    const std::string& problem_dir,
+    std::string& error
+) {
     ProblemConfig config;
     fs::path config_path = fs::path(problem_dir) / "problem.json";
 
@@ -102,25 +105,39 @@ static ProblemConfig load_problem_config(const std::string& problem_dir) {
 
     std::ifstream config_file(config_path);
     if (!config_file.is_open()) {
+        error = "Failed to open problem.json: " + config_path.string();
         return config;
     }
 
-    json problem_json;
-    config_file >> problem_json;
+    try {
+        json problem_json;
+        config_file >> problem_json;
 
-    config.title = problem_json.value("title", config.title);
-    config.time_limit_ms = problem_json.value("time_limit_ms", config.time_limit_ms);
-    config.memory_limit_mb = problem_json.value("memory_limit_mb", config.memory_limit_mb);
-    config.output_limit_mb = problem_json.value("output_limit_mb", config.output_limit_mb);
-    config.compile_time_limit_ms = problem_json.value(
-        "compile_time_limit_ms",
-        config.compile_time_limit_ms
-    );
-    config.compare_mode = compare_mode_from_string(
-        problem_json.value("compare_mode", compare_mode_to_string(config.compare_mode))
-    );
-    config.float_abs_eps = problem_json.value("float_abs_eps", config.float_abs_eps);
-    config.float_rel_eps = problem_json.value("float_rel_eps", config.float_rel_eps);
+        config.title = problem_json.value("title", config.title);
+        config.time_limit_ms = problem_json.value("time_limit_ms", config.time_limit_ms);
+        config.memory_limit_mb = problem_json.value("memory_limit_mb", config.memory_limit_mb);
+        config.output_limit_mb = problem_json.value("output_limit_mb", config.output_limit_mb);
+        config.compile_time_limit_ms = problem_json.value(
+            "compile_time_limit_ms",
+            config.compile_time_limit_ms
+        );
+
+        std::string compare_mode = problem_json.value(
+            "compare_mode",
+            compare_mode_to_string(config.compare_mode)
+        );
+        if (!is_valid_compare_mode(compare_mode)) {
+            error = "Invalid compare_mode in problem.json: " + compare_mode +
+                    ", expected exact or floating";
+            return config;
+        }
+        config.compare_mode = compare_mode_from_string(compare_mode);
+
+        config.float_abs_eps = problem_json.value("float_abs_eps", config.float_abs_eps);
+        config.float_rel_eps = problem_json.value("float_rel_eps", config.float_rel_eps);
+    } catch (const std::exception& e) {
+        error = "Invalid problem.json: " + std::string(e.what());
+    }
 
     return config;
 }
@@ -148,7 +165,7 @@ static bool parse_int_arg(
         }
 
         if (parsed_value <= 0) {
-            error = "Invalid integer for " + name + ": " + value + " must be positive";
+            error = "Invalid integer for " + name + ": " + value + ", must be positive";
             return false;
         }
 
@@ -172,9 +189,8 @@ void judge(int argc, char* argv[]) {
         problem_dir = argv[2];
     }
 
-    ProblemConfig problem_config = load_problem_config(problem_dir);
-
     std::string argument_error;
+    ProblemConfig problem_config = load_problem_config(problem_dir, argument_error);
 
     if (argc > 3 && !parse_int_arg(
         argv[3],
@@ -203,8 +219,13 @@ void judge(int argc, char* argv[]) {
         // handled after log_json is initialized
     }
 
-    if (argc > 6) {
-        problem_config.compare_mode = compare_mode_from_string(argv[6]);
+    if (argument_error.empty() && argc > 6) {
+        if (!is_valid_compare_mode(argv[6])) {
+            argument_error = "Invalid compare_mode: " + std::string(argv[6]) +
+                             ", expected exact or floating";
+        } else {
+            problem_config.compare_mode = compare_mode_from_string(argv[6]);
+        }
     }
 
     if (argument_error.empty() && argc > 7 && !parse_int_arg(
@@ -259,18 +280,6 @@ void judge(int argc, char* argv[]) {
         return;
     }
 
-    if (!argument_error.empty()) {
-        std::cout << argument_error << std::endl;
-
-        log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
-        log_json["error"] = argument_error;
-        log_json["passed"] = 0;
-        log_json["total"] = 0;
-
-        write_log_file(log_json);
-        return;
-    }
-
     std::vector<fs::path> input_files;
 
     for (const auto& entry : fs::directory_iterator(input_dir)) {
@@ -288,6 +297,18 @@ void judge(int argc, char* argv[]) {
         log_json["error"] = "No input files found in: " + input_dir;
         log_json["passed"] = 0;
         log_json["total"] = 0;
+
+        write_log_file(log_json);
+        return;
+    }
+
+    if (!argument_error.empty()) {
+        std::cout << argument_error << std::endl;
+
+        log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::RE);
+        log_json["error"] = argument_error;
+        log_json["passed"] = 0;
+        log_json["total"] = input_files.size();
 
         write_log_file(log_json);
         return;
@@ -330,6 +351,7 @@ void judge(int argc, char* argv[]) {
         case_json["input_file"] = input_path.string();
         case_json["standard_output_file"] = standard_output_file;
         case_json["user_output_file"] = user_output_file;
+        case_json["user_error_file"] = user_output_file + ".err";
 
         if (!fs::exists(standard_output_file)) {
             case_json["verdict"] = "WA";

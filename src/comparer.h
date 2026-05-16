@@ -7,6 +7,7 @@ enum class CompareMode {
     FLOATING
 };
 
+bool is_valid_compare_mode(const std::string& mode);
 CompareMode compare_mode_from_string(const std::string& mode);
 std::string compare_mode_to_string(CompareMode mode);
 

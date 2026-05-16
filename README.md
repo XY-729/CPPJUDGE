@@ -1,88 +1,151 @@
 # cppjudge
 
-**cppjudge** 是一个用于 C++ 在线评测（OJ）的小型系统，专注于 C++ 代码提交与自动评测，支持浮点数比较、内存监控、JSON 日志输出以及命令行参数配置，适合作为教学或练习使用。
+`cppjudge` is a small C++ online judge prototype. It compiles one C++17 submission, runs it against problem test data, compares outputs, records resource usage, and writes a JSON judge log.
 
 ---
 
-## 功能特点
+## Features
 
-- **C++ 在线评测**：只针对 C++ 提交进行编译、运行和评测  
-- **浮点比较**：支持浮点数输出精度比较，默认允许误差 `1e-6`  
-- **时间 & 内存监控**：记录每个样例运行时间（ms）和内存使用（MB）  
-- **JSON 日志输出**：自动生成 `build/judge_log.json`，保存每个测试样例结果  
-- **命令行参数支持**：可自定义提交文件、题目目录、时间和内存限制  
-- **沙箱运行**：安全执行用户程序，限制资源消耗  
-- **CMake 构建**：支持跨平台构建  
-
----
-
-## 项目结构
-
-
-cppjudge/
-├─ src/ # 源代码文件
-├─ include/ # 头文件（json.hpp 等）
-├─ build/ # 构建输出、用户输出、日志
-├─ problems/ # 测试题目数据
-├─ submissions/ # 用户提交代码
-├─ README.md
-├─ CMakeLists.txt
-├─ .gitignore
-
+- C++17 compile and run flow
+- `exact` and `floating` output comparison modes
+- Per-case time and memory reporting
+- JSON log at `build/judge_log.json`
+- User stdout files under `build/user_output/`
+- User stderr files next to stdout as `.out.err`
+- Compile time limit support
+- CMake-based Linux development workflow
 
 ---
 
-## 安装与依赖
+## Project Layout
 
-1. 安装编译器：
+| Path | Description |
+| --- | --- |
+| `src/` | Source files for judge, runner, compiler, and comparer |
+| `include/` | Third-party headers, such as `json.hpp` |
+| `build/` | Build output, judge logs, and user outputs |
+| `problems/` | Problem data, including `input/`, `output/`, and `problem.json` |
+| `submissions/` | User submissions and verdict test programs |
+| `README.md` | Project documentation |
+| `CMakeLists.txt` | CMake build configuration |
+| `.gitignore` | Ignored build and editor files |
+
+---
+
+## Build
+
+On Rocky Linux / Fedora:
 
 ```bash
 sudo dnf install gcc-c++ make cmake
-安装 JSON 库（nlohmann）：
-# 将 json.hpp 放入 include/ 下即可
-构建项目：
 mkdir -p build
 cd build
 cmake ..
 make
-使用方法
-# 运行评测
-./build/cppjudge submissions/solution.cpp problems/A+B 1000 128
-参数说明：
-提交文件（默认 submissions/solution.cpp）
-题目目录（默认 problems/A+B）
-时间限制 ms（默认 1000）
-内存限制 MB（默认 128）
-结果：
-终端显示最终 verdict 和通过数量
-JSON 日志文件：build/judge_log.json
-用户输出：build/user_output/
-GitHub 提交注意
-已经配置 .gitignore，build/、中间文件和可执行文件不会提交
-本地修改后：
-git add .
-git commit -m "描述修改内容"
-git push
-示例
+```
+
+---
+
+## Usage
+
+```bash
+./build/cppjudge [submission_file] [problem_dir] [time_limit_ms] [memory_limit_mb] [output_limit_mb] [compare_mode] [compile_time_limit_ms]
+```
+
+Arguments:
+
+- `submission_file`: C++ source file. Default: `submissions/solution.cpp`
+- `problem_dir`: problem directory. Default: `problems/A+B`
+- `time_limit_ms`: run time limit in milliseconds. Must be a positive integer.
+- `memory_limit_mb`: memory limit in MB. Must be a positive integer.
+- `output_limit_mb`: output limit in MB. Must be a positive integer.
+- `compare_mode`: output comparison mode. Supported values: `exact`, `floating`, `float`.
+- `compile_time_limit_ms`: compile time limit in milliseconds. Must be a positive integer.
+
+Example:
+
+```bash
+./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000
+```
+
+---
+
+## problem.json
+
+Each problem may provide a `problem.json` file:
+
+```json
 {
-    "submission": "submissions/solution.cpp",
-    "results": [
-        {
-            "case": "1",
-            "time_ms": 15,
-            "memory_mb": 12,
-            "verdict": "AC"
-        }
-    ],
-    "final_verdict": "Accepted",
-    "passed": 1,
-    "total": 1
+    "title": "A+B",
+    "time_limit_ms": 1000,
+    "memory_limit_mb": 128,
+    "output_limit_mb": 1,
+    "compile_time_limit_ms": 5000,
+    "compare_mode": "floating",
+    "float_abs_eps": 1e-6,
+    "float_rel_eps": 1e-6
 }
-未来改进方向
-增加多语言支持
-增加在线网页提交界面
-支持更多评测模式（例如交互题、批量评测）
-更完善的沙箱安全机制
-作者
+```
+
+Command-line arguments override values loaded from `problem.json`.
+
+---
+
+## Output Files
+
+- Judge log: `build/judge_log.json`
+- User stdout: `build/user_output/*.out`
+- User stderr: `build/user_output/*.out.err`
+- Compile errors: `build/compile_error.txt`
+
+Each case in the JSON log includes the stdout and stderr paths:
+
+```json
+{
+    "case": "1",
+    "input_file": "problems/A+B/input/1.in",
+    "standard_output_file": "problems/A+B/output/1.out",
+    "user_output_file": "build/user_output/1.out",
+    "user_error_file": "build/user_output/1.out.err",
+    "time_ms": 15,
+    "memory_mb": 12,
+    "verdict": "AC"
+}
+```
+
+---
+
+## Verdict Test Submissions
+
+Keep these files for regression checks:
+
+```text
+submissions/tests/ac.cpp
+submissions/tests/wa.cpp
+submissions/tests/ce.cpp
+submissions/tests/tle.cpp
+submissions/tests/mle.cpp
+submissions/tests/ole.cpp
+submissions/tests/re.cpp
+```
+
+Example:
+
+```bash
+cp submissions/tests/mle.cpp submissions/solution.cpp
+./build/cppjudge submissions/solution.cpp problems/A+B 1000 16
+python3 -m json.tool build/judge_log.json
+```
+
+---
+
+## Future Work
+
+- Multiple language support
+- Web submission UI
+- Special Judge support
+- Stronger sandboxing
+
+## Author
 
 XY-729

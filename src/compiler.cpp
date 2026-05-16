@@ -66,6 +66,8 @@ bool compile_cpp(
     pid_t pid = fork();
 
     if (pid < 0) {
+        std::ofstream error_file_stream(error_file, std::ios::app);
+        error_file_stream << "Failed to fork compiler process\n";
         return false;
     }
 
@@ -90,6 +92,7 @@ bool compile_cpp(
         argv.push_back(nullptr);
 
         execvp(argv[0], argv.data());
+        std::cout << "Failed to execute g++" << std::endl;
         _exit(127);
     }
 
