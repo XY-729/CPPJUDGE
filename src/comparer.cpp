@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
 
-static std::string normalize_trailing_whitespace(const std::string& s) {
+namespace {
+
+std::string normalize_trailing_whitespace(const std::string& s) {
     std::string result = s;
 
     while (!result.empty()) {
@@ -24,11 +27,114 @@ static std::string normalize_trailing_whitespace(const std::string& s) {
     return result;
 }
 
+std::string to_lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool parse_double_full(const std::string& token, double& value) {
+    if (token.empty()) {
+        return false;
+    }
+
+    errno = 0;
+
+    char* end = nullptr;
+    value = std::strtod(token.c_str(), &end);
+
+    if (end == token.c_str()) {
+        return false;
+    }
+
+    if (*end != '\0') {
+        return false;
+    }
+
+    if (errno == ERANGE) {
+        return false;
+    }
+
+    if (!std::isfinite(value)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool almost_equal(
+    double user_value,
+    double standard_value,
+    double abs_eps,
+    double rel_eps
+) {
+    double diff = std::fabs(user_value - standard_value);
+    double scale = std::max(
+        1.0,
+        std::max(std::fabs(user_value), std::fabs(standard_value))
+    );
+
+    double allowed = std::max(abs_eps, rel_eps * scale);
+
+    return diff <= allowed;
+}
+
+} // namespace
+
+bool is_valid_compare_mode(const std::string& mode) {
+    std::string normalized = to_lower(mode);
+    return normalized == "exact" ||
+           normalized == "floating" ||
+           normalized == "float";
+}
+
+CompareMode compare_mode_from_string(const std::string& mode) {
+    std::string normalized = to_lower(mode);
+
+    if (normalized == "floating" || normalized == "float") {
+        return CompareMode::FLOATING;
+    }
+
+    return CompareMode::EXACT;
+}
+
+std::string compare_mode_to_string(CompareMode mode) {
+    switch (mode) {
+        case CompareMode::FLOATING:
+            return "floating";
+        case CompareMode::EXACT:
+        default:
+            return "exact";
+    }
+}
+
 bool compare_output(
     const std::string& user_output_file,
     const std::string& standard_output_file
 ) {
     return compare_output_exact(user_output_file, standard_output_file);
+}
+
+bool compare_output(
+    const std::string& user_output_file,
+    const std::string& standard_output_file,
+    CompareMode mode,
+    double abs_eps,
+    double rel_eps
+) {
+    switch (mode) {
+        case CompareMode::FLOATING:
+            return compare_output_floating(
+                user_output_file,
+                standard_output_file,
+                abs_eps,
+                rel_eps
+            );
+        case CompareMode::EXACT:
+        default:
+            return compare_output_exact(user_output_file, standard_output_file);
+    }
 }
 
 bool compare_output_exact(
@@ -50,54 +156,6 @@ bool compare_output_exact(
 
     return normalize_trailing_whitespace(user_buffer.str()) ==
            normalize_trailing_whitespace(standard_buffer.str());
-}
-
-static bool parse_double_full(const std::string& token, double& value) {
-    if (token.empty()) {
-        return false;
-    }
-
-    errno = 0;
-
-    char* end = nullptr;
-    value = std::strtod(token.c_str(), &end);
-
-    if (end == token.c_str()) {
-        return false;
-    }
-
-    // 防止 "1abc" 被当成数字 1
-    if (*end != '\0') {
-        return false;
-    }
-
-    if (errno == ERANGE) {
-        return false;
-    }
-
-    // 拒绝 nan / inf
-    if (!std::isfinite(value)) {
-        return false;
-    }
-
-    return true;
-}
-
-static bool almost_equal(
-    double user_value,
-    double standard_value,
-    double abs_eps,
-    double rel_eps
-) {
-    double diff = std::fabs(user_value - standard_value);
-    double scale = std::max(
-        1.0,
-        std::max(std::fabs(user_value), std::fabs(standard_value))
-    );
-
-    double allowed = std::max(abs_eps, rel_eps * scale);
-
-    return diff <= allowed;
 }
 
 bool compare_output_floating(

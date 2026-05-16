@@ -1,16 +1,22 @@
 #include "compiler.h"
 
+#include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <fcntl.h>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
 
-static void create_parent_directory_if_needed(const std::string& file_path) {
+namespace {
+
+void create_parent_directory_if_needed(const std::string& file_path) {
     fs::path path(file_path);
     fs::path parent = path.parent_path();
 
@@ -19,15 +25,22 @@ static void create_parent_directory_if_needed(const std::string& file_path) {
     }
 }
 
+void kill_process_group(pid_t pid) {
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+}
+
+} // namespace
+
 bool compile_cpp(
     const std::string& source_file,
     const std::string& executable_file,
-    const std::string& error_file
+    const std::string& error_file,
+    int compile_time_limit_ms
 ) {
     create_parent_directory_if_needed(executable_file);
     create_parent_directory_if_needed(error_file);
 
-    // 先清空旧的编译错误文件
     {
         int fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd >= 0) {
@@ -53,10 +66,14 @@ bool compile_cpp(
     pid_t pid = fork();
 
     if (pid < 0) {
+        std::ofstream error_file_stream(error_file, std::ios::app);
+        error_file_stream << "Failed to fork compiler process\n";
         return false;
     }
 
     if (pid == 0) {
+        setpgid(0, 0);
+
         int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (err_fd < 0) {
             _exit(127);
@@ -75,15 +92,45 @@ bool compile_cpp(
         argv.push_back(nullptr);
 
         execvp(argv[0], argv.data());
-
-        // execvp 失败才会执行到这里
+        std::cout << "Failed to execute g++" << std::endl;
         _exit(127);
     }
 
     int status = 0;
+    auto start_time = std::chrono::steady_clock::now();
 
-    if (waitpid(pid, &status, 0) < 0) {
-        return false;
+    while (true) {
+        pid_t wait_result = waitpid(pid, &status, WNOHANG);
+
+        auto now = std::chrono::steady_clock::now();
+        int elapsed_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - start_time
+            ).count()
+        );
+
+        if (wait_result == pid) {
+            break;
+        }
+
+        if (wait_result < 0) {
+            return false;
+        }
+
+        if (compile_time_limit_ms > 0 && elapsed_ms > compile_time_limit_ms) {
+            kill_process_group(pid);
+            waitpid(pid, &status, 0);
+
+            std::ofstream error_file_stream(error_file, std::ios::app);
+            error_file_stream << "Compile Time Limit Exceeded: "
+                              << elapsed_ms
+                              << " ms > "
+                              << compile_time_limit_ms
+                              << " ms\n";
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
