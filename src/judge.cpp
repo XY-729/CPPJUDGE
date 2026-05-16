@@ -147,6 +147,11 @@ static bool parse_int_arg(
             return false;
         }
 
+        if (parsed_value <= 0) {
+            error = "Invalid integer for " + name + ": " + value + " must be positive";
+            return false;
+        }
+
         target = parsed_value;
         return true;
     } catch (const std::exception&) {
@@ -304,7 +309,7 @@ void judge(int argc, char* argv[]) {
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::CE);
         log_json["compile_error"] = compile_error;
         log_json["passed"] = 0;
-        log_json["total"] = 0;
+        log_json["total"] = input_files.size();
 
         write_log_file(log_json);
         return;
