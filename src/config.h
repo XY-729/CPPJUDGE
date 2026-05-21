@@ -2,7 +2,7 @@
 
 #include <string>
 
-const std::string PROBLEM_NAME = "A+B";
+const std::string PROBLEM_NAME = "NONE";
 
 const std::string BUILD_DIR = "build";
 const std::string SUBMISSION_FILE = "submissions/solution.cpp";
