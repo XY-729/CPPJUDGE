@@ -145,6 +145,46 @@ void clear_child_environment() {
 #endif
 }
 
+bool is_executable_file(const std::filesystem::path& path) {
+    return access(path.c_str(), X_OK) == 0;
+}
+
+bool executable_exists_in_path(const std::string& executable_name) {
+    if (executable_name.find("/") != std::string::npos) {
+        return is_executable_file(executable_name);
+    }
+
+    const char* path_value = std::getenv("PATH");
+    if (path_value == nullptr) {
+        return false;
+    }
+
+    std::string path_list = path_value;
+    std::size_t start = 0;
+    while (start <= path_list.size()) {
+        std::size_t end = path_list.find(":", start);
+        std::string entry = path_list.substr(
+            start,
+            end == std::string::npos ? std::string::npos : end - start
+        );
+
+        if (entry.empty()) {
+            entry = ".";
+        }
+
+        if (is_executable_file(std::filesystem::path(entry) / executable_name)) {
+            return true;
+        }
+
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+
+    return false;
+}
+
 void apply_builtin_child_limits(int time_limit_ms) {
     set_limit_or_exit(RLIMIT_CORE, 0);
     set_limit_or_exit(RLIMIT_NOFILE, BUILTIN_NOFILE_LIMIT);
@@ -477,6 +517,29 @@ bool is_valid_sandbox_type(const std::string& type) {
            normalized == "isolate";
 }
 
+
+bool sandbox_preflight_check(SandboxType type, std::string& error) {
+    error.clear();
+
+    if (type == SandboxType::BUILTIN) {
+        return true;
+    }
+
+    if (type == SandboxType::NSJAIL) {
+        if (!executable_exists_in_path("nsjail")) {
+            error = "nsjail executable not found in PATH";
+            return false;
+        }
+        return true;
+    }
+
+    if (type == SandboxType::ISOLATE) {
+        return true;
+    }
+
+    error = "Unknown sandbox type: " + sandbox_type_to_string(type);
+    return false;
+}
 
 static RunInfo run_program_builtin(
     const std::string& executable_file,

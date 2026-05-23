@@ -312,6 +312,19 @@ not change the current runner behavior.
 
 ---
 
+## Production Mode / 生产模式
+
+Set CPPJUDGE_ENV=production or CPPJUDGE_PRODUCTION=1 for production-like runs. In this mode CPPJUDGE fails closed before compilation or execution when the selected sandbox is unsafe or unavailable.
+
+- builtin is rejected because it is not a real security sandbox.
+- isolate is rejected until the backend is implemented.
+- nsjail must be available in PATH before judging starts.
+- nsjail sandbox type also runs compilation through nsjail with the source copied into the per-run work directory.
+
+This guardrail does not make the current nsjail MVP product-grade by itself; it prevents accidental fallback to unsafe or missing sandbox paths.
+
+---
+
 ## Continuous Integration / 持续集成
 
 GitHub Actions runs the default regression test script on every `push` and

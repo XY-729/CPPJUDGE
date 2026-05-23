@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -124,6 +126,67 @@ static std::string read_text_file(const std::string& file_path) {
     buffer << file.rdbuf();
 
     return buffer.str();
+}
+
+static std::string lower_string(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+static bool is_enabled_environment_flag(const char* value) {
+    if (value == nullptr) {
+        return false;
+    }
+
+    std::string normalized = lower_string(value);
+    return !normalized.empty() &&
+           normalized != "0" &&
+           normalized != "false" &&
+           normalized != "no" &&
+           normalized != "off";
+}
+
+static bool is_production_environment_label(const char* value) {
+    if (value == nullptr) {
+        return false;
+    }
+
+    std::string normalized = lower_string(value);
+    return normalized.rfind("prod", 0) == 0;
+}
+
+static bool is_production_environment() {
+    return is_enabled_environment_flag(std::getenv("CPPJUDGE_PRODUCTION")) ||
+           is_production_environment_label(std::getenv("CPPJUDGE_ENV"));
+}
+
+static bool validate_sandbox_for_environment(
+    const ProblemConfig& config,
+    bool production_mode,
+    std::string& error
+) {
+    if (production_mode && config.sandbox_type == SandboxType::BUILTIN) {
+        error = "Production mode requires a real sandbox; builtin is not allowed";
+        return false;
+    }
+
+    if (production_mode && config.sandbox_type == SandboxType::ISOLATE) {
+        error = "Production mode cannot use isolate because it is not implemented";
+        return false;
+    }
+
+    std::string preflight_error;
+    if (!sandbox_preflight_check(config.sandbox_type, preflight_error)) {
+        error = "Sandbox preflight failed for " +
+                sandbox_type_to_string(config.sandbox_type) +
+                ": " +
+                preflight_error;
+        return false;
+    }
+
+    return true;
 }
 
 static bool load_string_config_field(
@@ -387,6 +450,7 @@ void judge(int argc, char* argv[]) {
     std::string problem_config_error;
     std::string argument_error;
     ProblemConfig problem_config = load_problem_config(problem_dir, problem_config_error);
+    bool production_mode = is_production_environment();
 
     if (problem_config_error.empty() && argc > 3 && !parse_int_arg(
         argv[3],
@@ -492,6 +556,19 @@ void judge(int argc, char* argv[]) {
         return;
     }
 
+    std::string sandbox_error;
+    if (!validate_sandbox_for_environment(problem_config, production_mode, sandbox_error)) {
+        std::cout << sandbox_error << std::endl;
+
+        log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
+        log_json["error"] = sandbox_error;
+        log_json["passed"] = 0;
+        log_json["total"] = 0;
+
+        write_log_file(judge_log_file, log_json);
+        return;
+    }
+
     if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
         std::cout << "Input directory not found: " << input_dir << std::endl;
 
@@ -542,7 +619,8 @@ void judge(int argc, char* argv[]) {
         submission_file,
         executable_file,
         compile_error_file,
-        problem_config.compile_time_limit_ms
+        problem_config.compile_time_limit_ms,
+        problem_config.sandbox_type
     );
 
     if (!compile_ok) {

@@ -121,4 +121,42 @@ run_nsjail_case "nsjail_stderr" "submissions/tests/security/stderr_output.cpp" "
 run_nsjail_case "nsjail_fs" "submissions/tests/security/fs_isolation.cpp" "Accepted" "CPPJUDGE_NSJAIL_FS_ISOLATED"
 run_nsjail_case "nsjail_net" "submissions/tests/security/network_access.cpp" "Accepted" "CPPJUDGE_NSJAIL_NETWORK_ISOLATED"
 
+run_nsjail_compile_isolation_case() {
+    local name="nsjail_compile_fs"
+    ./build/cppjudge "submissions/tests/security/compile_include_passwd.cpp" "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_nsjail_\${name}.log 2>&1 || true
+
+    python3 - "$name" <<'PY'
+import json
+import sys
+
+name = sys.argv[1]
+with open("build/judge_log.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+if data.get("final_verdict") != "Compile Error":
+    print(f'[FAIL] {name} -> expected Compile Error, got {data.get("final_verdict")}')
+    sys.exit(1)
+
+compile_error_file = data.get("compile_error_file", "")
+if not compile_error_file:
+    print(f'[FAIL] {name} -> missing compile_error_file')
+    sys.exit(1)
+
+with open(compile_error_file, "r", encoding="utf-8", errors="replace") as f:
+    compile_error = f.read()
+
+if "root:x:" in compile_error:
+    print(f'[FAIL] {name} -> compile error leaked /etc/passwd content')
+    sys.exit(1)
+
+if "/etc/passwd" not in compile_error or "No such file" not in compile_error:
+    print(f'[FAIL] {name} -> expected isolated missing-file error')
+    sys.exit(1)
+PY
+
+    printf '[PASS] %-18s -> Compile Error\n' "$name"
+}
+
+run_nsjail_compile_isolation_case
+
 echo "All nsjail tests passed."
