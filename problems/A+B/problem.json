@@ -4,8 +4,8 @@
     "memory_limit_mb": 128,
     "output_limit_mb": 1,
     "compile_time_limit_ms": 5000,
-    "sandbox_type": "nsjail",
+    "sandbox_type": "builtin",
     "compare_mode": "floating",
-    "float_abs_eps": 1e-6,
-    "float_rel_eps": 1e-6
+    "float_abs_eps": 1e-06,
+    "float_rel_eps": 1e-06
 }
