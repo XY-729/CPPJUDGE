@@ -213,7 +213,7 @@ std::vector<std::string> build_nsjail_compile_args(//沙箱编译
         "nsjail",//执行的程序
         "-Mo",//nsjail 的运行模式参数
         "--chroot",
-        absolute_path(sandbox_root),。//把沙箱根目录设置为 sandbox_root。
+        absolute_path(sandbox_root),//把沙箱根目录设置为 sandbox_root。
         "--cwd",
         "/work",//沙箱内工作目录设置为 /work
         "--disable_proc",//禁用 /proc，减少程序通过 /proc 观察系统信息的能力。
