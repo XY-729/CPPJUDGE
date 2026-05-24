@@ -18,23 +18,19 @@
 #include <unistd.h>
 #include <vector>
 
-// The BUILTIN sandbox is a lightweight runner for local development and
-// teaching. It provides stdin/stdout/stderr redirection, time limits, memory
-// checks, output size limits, process-group cleanup, and basic rlimit usage.
-// It is not a complete security sandbox: it does not provide namespaces,
-// chroot/pivot_root, seccomp, cgroups, network isolation, or a dedicated
-// low-privilege user. Do not expose it directly to the public internet or run
-// arbitrary untrusted submissions with it.
+// builtin 只适合本地开发和测试，不是完整安全沙箱。
+// 真正对外跑不可信代码时，应使用 nsjail / isolate 这类沙箱。
 
 #if defined(__linux__)
-extern char** environ;
+// Linux/glibc 下环境变量由全局变量 environ 管理。
+extern char** environ;//environ 是一个 char**，指向环境变量字符串数组。
 #endif
 
 namespace {
 
 static constexpr SandboxType DEFAULT_SANDBOX_TYPE = SandboxType::BUILTIN;
-static constexpr int BUILTIN_NOFILE_LIMIT = 64;
-static constexpr int BUILTIN_NPROC_LIMIT = 16;
+static constexpr int BUILTIN_NOFILE_LIMIT = 64;//子进程最多允许打开 64 个文件描述符。
+static constexpr int BUILTIN_NPROC_LIMIT = 16;//子进程最多允许 16 个进程。
 
 struct SandboxRunConfig {
     std::string executable_file;
@@ -74,7 +70,7 @@ bool reached_memory_limit(int memory_mb, int memory_limit_mb) {
     return memory_mb > memory_limit_mb;
 }
 
-bool file_contains(const std::string& file_path, const std::string& keyword) {
+bool file_contains(const std::string& file_path, const std::string& keyword) {//读文件里是否包含某个字符串
     std::ifstream file(file_path);
 
     if (!file.is_open()) {
@@ -87,7 +83,7 @@ bool file_contains(const std::string& file_path, const std::string& keyword) {
     return buffer.str().find(keyword) != std::string::npos;
 }
 
-int read_process_memory_mb(pid_t pid) {
+int read_process_memory_mb(pid_t pid) {//builtin 读内存
     std::ifstream status_file("/proc/" + std::to_string(pid) + "/status");
 
     if (!status_file.is_open()) {
@@ -121,7 +117,7 @@ int rusage_memory_mb(const struct rusage& usage) {
 
 void set_limit_or_exit(int resource, long long value) {
     struct rlimit limit {};
-
+    //这是对 setrlimit 的封装
     limit.rlim_cur = static_cast<rlim_t>(value);
     limit.rlim_max = static_cast<rlim_t>(value);
 
@@ -130,26 +126,29 @@ void set_limit_or_exit(int resource, long long value) {
     }
 }
 
-void close_extra_file_descriptors() {
+void close_extra_file_descriptors() {//关闭多余 fd,防止用户程序继承 judge 父进程打开的其他文件描述符。
     for (int fd = STDERR_FILENO + 1; fd < BUILTIN_NOFILE_LIMIT; ++fd) {
         close(fd);
     }
 }
 
-void clear_child_environment() {
+void clear_child_environment() {//清空环境变量
 #if defined(__linux__)
-    // clearenv() is not consistently declared by all standard library modes.
-    // Resetting environ keeps the child from inheriting PATH and unrelated
-    // environment variables; execl uses an explicit executable path here.
+    // 这里不调用 clearenv()，是因为在某些标准库/编译模式下，
+    // clearenv() 可能没有被头文件声明，容易导致编译问题。
+    // 直接把 environ 置空，相当于让当前进程没有环境变量。
+    // 后续 execl/execve 启动的新程序也不会继承 PATH、HOME、LD_PRELOAD 等变量。
+    // 注意：清空 PATH 后不能依赖 execlp/execvp 从 PATH 查找程序，
+    // 所以后续应使用 /usr/bin/nsjail 这类明确路径。
     environ = nullptr;
 #endif
 }
 
-bool is_executable_file(const std::filesystem::path& path) {
+bool is_executable_file(const std::filesystem::path& path) {//检查可执行文件是否存在
     return access(path.c_str(), X_OK) == 0;
 }
 
-bool executable_exists_in_path(const std::string& executable_name) {
+bool executable_exists_in_path(const std::string& executable_name) {//这个函数检查某个程序是否能在 PATH 里找到。
     if (executable_name.find("/") != std::string::npos) {
         return is_executable_file(executable_name);
     }
@@ -190,9 +189,9 @@ void apply_builtin_child_limits(int time_limit_ms) {
     set_limit_or_exit(RLIMIT_NOFILE, BUILTIN_NOFILE_LIMIT);
 
 #if defined(RLIMIT_NPROC)
-    // RLIMIT_NPROC is per real user ID on Linux and may be ignored for root or
-    // affected by the account already running other processes. It is a basic
-    // fork-bomb guard for local testing, not a replacement for cgroups.
+    // Linux 下 RLIMIT_NPROC 按真实用户 ID 统计，root 可能会忽略它，
+    // 同一账号下已有进程也会影响这个限制。它只是本地测试用的基础 fork 炸弹防护，
+    // 不能替代 cgroup。
     set_limit_or_exit(RLIMIT_NPROC, BUILTIN_NPROC_LIMIT);
 #endif
 
@@ -205,14 +204,15 @@ int nsjail_time_limit_seconds(int time_limit_ms) {
 }
 
 int nsjail_address_space_limit_mb(int memory_limit_mb) {
-    // Dynamically linked C++ programs need startup headroom, but nsjail should
-    // still trip memory-heavy submissions promptly in the MVP tests. cgroup v2
-    // will be the better long-term memory counter.
+    // 动态链接的 C++ 程序启动时需要额外空间，但 nsjail 在 MVP 测试里
+    // 仍然应该能尽快拦住明显吃内存的提交。长期来看，cgroup v2
+    // 会是更合适的内存计量方式。
     static constexpr int NSJAIL_AS_HEADROOM_MB = 64;
     return memory_limit_mb + NSJAIL_AS_HEADROOM_MB;
 }
 
 std::string absolute_path_for_nsjail(const std::string& path) {
+    // 为 nsjail bind mount 获取真实绝对路径；失败时保留原路径
     char resolved_path[PATH_MAX];
 
     if (realpath(path.c_str(), resolved_path) != nullptr) {
@@ -223,6 +223,7 @@ std::string absolute_path_for_nsjail(const std::string& path) {
 }
 
 void create_empty_file_if_missing(const std::filesystem::path& path) {
+    // 如果文件不存在则创建空文件，用于预建 nsjail chroot 内的占位路径
     if (std::filesystem::exists(path)) {
         return;
     }
@@ -233,7 +234,7 @@ void create_empty_file_if_missing(const std::filesystem::path& path) {
 void create_relative_symlink_if_missing(
     const std::filesystem::path& target,
     const std::filesystem::path& link
-) {
+) {// 如果符号链接不存在则创建，模拟 /lib64 -> /usr/lib64 等目录结构
     if (std::filesystem::exists(link) || std::filesystem::is_symlink(link)) {
         return;
     }
@@ -246,7 +247,7 @@ void add_bindmount_if_exists(
     const std::string& flag,
     const std::string& source,
     const std::string& destination
-) {
+) {//添加 bind mount 参数
     if (!std::filesystem::exists(source)) {
         return;
     }
@@ -338,14 +339,13 @@ SandboxRunConfig make_sandbox_run_config(
 }
 
 std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
-    // First isolation pass: run inside a per-run chroot and expose only the
-    // compiled solution, the output directory, and a small set of dynamic-linker
-    // files needed by ordinary C++ binaries on Rocky Linux.
-    // TODO: generate this library list from a trusted dependency scanner or
-    // provide a managed minimal rootfs.
-    // TODO: add cgroup memory limit for stronger MLE enforcement.
-    // TODO: add seccomp policy.
-    // TODO: add explicit low-privilege user mapping.
+    // 第一版隔离方案：在每次运行独立的 chroot 中执行，只暴露
+    // 编译后的 solution、输出目录，以及 Rocky Linux 上普通 C++ 二进制
+    // 所需的一小组动态链接文件。
+    // TODO: 后续应通过可信依赖扫描器生成库列表，或提供受控的最小 rootfs。
+    // TODO: 增加 cgroup 内存限制，让 MLE 判定更强。
+    // TODO: 增加 seccomp 策略。
+    // TODO: 增加明确的低权限用户映射。
     std::vector<std::string> args = {
         "nsjail",
         "-Mo",
@@ -354,9 +354,9 @@ std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
         "--cwd",
         "/sandbox",
         "--disable_proc",
-        // Keep nsjail's default network namespace isolation. Do not pass
-        // --disable_clone_newnet, because that disables the network namespace.
-        // scripts/run_nsjail_tests.sh verifies connect() fails in this mode.
+        // 保留 nsjail 默认的网络 namespace 隔离。不要传
+        // --disable_clone_newnet，因为它会关闭网络 namespace。
+        // scripts/run_nsjail_tests.sh 会验证这种模式下 connect() 失败。
         "--time_limit",
         std::to_string(nsjail_time_limit_seconds(config.time_limit_ms)),
         "--rlimit_as",
@@ -965,7 +965,7 @@ static RunInfo run_program_isolate(
     std::ofstream error_file(output_file + ".err", std::ios::trunc);
     error_file << "Sandbox type not implemented: isolate\n";
 
-    // TODO: integrate isolate sandbox runner.
+    // TODO: 接入 isolate 沙箱 runner。
     return {RunResult::RE, 0, 0};
 }
 

@@ -31,9 +31,9 @@ void create_parent_directory_if_needed(const std::string& file_path) {
     }
 }
 
-void kill_process_group(pid_t pid) {
+void kill_process_group(pid_t pid) {//杀死进程组
     kill(-pid, SIGKILL);
-    kill(pid, SIGKILL);
+    kill(pid, SIGKILL);//保险，单独再杀一次主进程
 }
 
 void create_empty_file(const std::string& file_path) {
@@ -43,11 +43,12 @@ void create_empty_file(const std::string& file_path) {
     }
 }
 
-int compile_time_limit_seconds(int compile_time_limit_ms) {
+int compile_time_limit_seconds(int compile_time_limit_ms) {//把毫秒转成秒
     return (compile_time_limit_ms + 999) / 1000 + 1;
+    //多给 nsjail 1 秒缓冲，避免 nsjail 秒级限制比父进程毫秒限制更早触发。
 }
 
-std::string absolute_path(const fs::path& path) {
+std::string absolute_path(const fs::path& path) {//取绝对路径
     try {
         return fs::weakly_canonical(path).string();
     } catch (const std::exception&) {
@@ -55,7 +56,7 @@ std::string absolute_path(const fs::path& path) {
     }
 }
 
-void add_bindmount_if_exists(
+void add_bindmount_if_exists(//如果路径存在，就添加参数
     std::vector<std::string>& args,
     const std::string& flag,
     const fs::path& source,
@@ -79,6 +80,7 @@ std::string join_args_for_log(const std::vector<std::string>& args) {
 
         const std::string& arg = args[i];
         bool needs_quotes = arg.find_first_of(" \t\n\"'") != std::string::npos;
+        //参数里有空格就加上引号
 
         if (!needs_quotes) {
             oss << arg;
@@ -98,14 +100,14 @@ std::string join_args_for_log(const std::vector<std::string>& args) {
     return oss.str();
 }
 
-std::vector<std::string> base_gpp_args(
+std::vector<std::string> base_gpp_args(//生成基础g++参数
     const std::string& source_file,
     const std::string& executable_file
 ) {
     return {"g++", source_file, "-o", executable_file, "-std=c++17", "-O2"};
 }
 
-bool wait_for_compile_process(
+bool wait_for_compile_process(//等待编译进程结束，并监控超时
     pid_t pid,
     const std::string& error_file,
     int compile_time_limit_ms
@@ -114,7 +116,7 @@ bool wait_for_compile_process(
     auto start_time = std::chrono::steady_clock::now();
 
     while (true) {
-        pid_t wait_result = waitpid(pid, &status, WNOHANG);
+        pid_t wait_result = waitpid(pid, &status, WNOHANG);//非阻塞等待
 
         auto now = std::chrono::steady_clock::now();
         int elapsed_ms = static_cast<int>(
@@ -132,8 +134,8 @@ bool wait_for_compile_process(
         }
 
         if (compile_time_limit_ms > 0 && elapsed_ms > compile_time_limit_ms) {
-            kill_process_group(pid);
-            waitpid(pid, &status, 0);
+            kill_process_group(pid);//杀死子进程
+            waitpid(pid, &status, 0);//回收，避免僵尸进程
 
             std::ofstream error_file_stream(error_file, std::ios::app);
             error_file_stream << "Compile Time Limit Exceeded: "
@@ -150,7 +152,7 @@ bool wait_for_compile_process(
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-bool compile_cpp_builtin(
+bool compile_cpp_builtin(//普通的编译，不安全
     const std::string& source_file,
     const std::string& executable_file,
     const std::string& error_file,
@@ -200,7 +202,7 @@ bool compile_cpp_builtin(
     return wait_for_compile_process(pid, error_file, compile_time_limit_ms);
 }
 
-std::vector<std::string> build_nsjail_compile_args(
+std::vector<std::string> build_nsjail_compile_args(//沙箱编译
     const fs::path& run_dir,
     const fs::path& sandbox_root,
     int compile_time_limit_ms
@@ -208,17 +210,17 @@ std::vector<std::string> build_nsjail_compile_args(
     int time_limit_seconds = compile_time_limit_seconds(compile_time_limit_ms);
 
     std::vector<std::string> args = {
-        "nsjail",
-        "-Mo",
+        "nsjail",//执行的程序
+        "-Mo",//nsjail 的运行模式参数
         "--chroot",
-        absolute_path(sandbox_root),
+        absolute_path(sandbox_root),。//把沙箱根目录设置为 sandbox_root。
         "--cwd",
-        "/work",
-        "--disable_proc",
+        "/work",//沙箱内工作目录设置为 /work
+        "--disable_proc",//禁用 /proc，减少程序通过 /proc 观察系统信息的能力。
         "--env",
-        "PATH=/usr/bin:/bin",
+        "PATH=/usr/bin:/bin",//给沙箱里的进程设置 PATH。
         "--env",
-        "TMPDIR=/tmp",
+        "TMPDIR=/tmp",//告诉编译器临时文件放 /tmp。
         "--time_limit",
         std::to_string(time_limit_seconds),
         "--rlimit_as",
@@ -237,8 +239,10 @@ std::vector<std::string> build_nsjail_compile_args(
 
     args.push_back("--bindmount");
     args.push_back(absolute_path(run_dir) + ":/work");
+    // 将本次评测运行目录以可读写方式挂载到沙箱内 /work，供 g++ 读取源码和输出可执行文件
 
     add_bindmount_if_exists(args, "--bindmount", run_dir / "compile_tmp", "/tmp");
+    // 将独立 compile_tmp 挂载为沙箱内 /tmp，供编译器写临时文件
     add_bindmount_if_exists(args, "--bindmount_ro", "/usr", "/usr");
     add_bindmount_if_exists(args, "--bindmount_ro", "/lib64", "/lib64");
     add_bindmount_if_exists(args, "--bindmount_ro", "/lib", "/lib");
@@ -268,6 +272,10 @@ bool compile_cpp_nsjail(
     fs::path sandbox_source_file = run_dir / "submission.cpp";
 
     try {
+        // 1. 创建 run_dir
+        // 2. 创建 compile_sandbox_root
+        // 3. 创建 compile_tmp
+        // 4. 把用户源码复制到 run_dir/submission.cpp
         fs::create_directories(run_dir);
         fs::create_directories(sandbox_root);
         fs::create_directories(compile_tmp);
@@ -289,7 +297,7 @@ bool compile_cpp_nsjail(
     std::cout << "[Compile/nsjail] " << join_args_for_log(args)
               << " 2> " << error_file << std::endl;
 
-    pid_t pid = fork();
+    pid_t pid = fork();//fork之后是两个进程，父进程里pid是子进程的pid，子进程里是0
 
     if (pid < 0) {
         std::ofstream error_file_stream(error_file, std::ios::app);
@@ -298,7 +306,7 @@ bool compile_cpp_nsjail(
     }
 
     if (pid == 0) {
-        setpgid(0, 0);
+        setpgid(0, 0);//// 子进程自成进程组，便于父进程超时时杀掉 nsjail 及其子进程
 
         int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (err_fd < 0) {
@@ -307,7 +315,7 @@ bool compile_cpp_nsjail(
 
         dup2(err_fd, STDERR_FILENO);
         dup2(err_fd, STDOUT_FILENO);
-        close(err_fd);
+        close(err_fd);//重定向日志输出，STDOUT_FILENO(1)，STDERR_FILENO(2)是宏
 
         std::string command_log = join_args_for_log(args);
         dprintf(STDERR_FILENO, "[nsjail compile] command: %s\n", command_log.c_str());
@@ -319,12 +327,12 @@ bool compile_cpp_nsjail(
         }
         argv.push_back(nullptr);
 
-        execvp("nsjail", argv.data());
+        execvp("nsjail", argv.data());//替换掉子进程
         dprintf(STDERR_FILENO, "Failed to execute nsjail for compile\n");
         _exit(127);
     }
 
-    return wait_for_compile_process(pid, error_file, compile_time_limit_ms);
+    return wait_for_compile_process(pid, error_file, compile_time_limit_ms);//父进程等待编译
 }
 
 } // namespace

@@ -26,7 +26,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-enum class FinalVerdict {
+enum class FinalVerdict {//最终判断
     AC,
     WA,
     TLE,
@@ -37,7 +37,7 @@ enum class FinalVerdict {
     CE
 };
 
-struct ProblemConfig {
+struct ProblemConfig {//题目配置
     std::string title = PROBLEM_NAME;
     int time_limit_ms = TIME_LIMIT_MS;
     int memory_limit_mb = MEMORY_LIMIT_MB;
@@ -99,18 +99,18 @@ static bool is_sandbox_system_error(
     if (problem_config.sandbox_type == SandboxType::BUILTIN ||
         run_info.result != RunResult::RE) {
         return false;
-    }
+    }//用的自己写的残疾沙箱或者不是RE
 
     std::string stderr_content = read_text_file(user_error_file);
 
     if (problem_config.sandbox_type == SandboxType::NSJAIL) {
         return stderr_content.find("Failed to execute nsjail") != std::string::npos ||
                stderr_content.find("Failed to prepare nsjail filesystem") != std::string::npos;
-    }
+    }//用的nsjail沙箱
 
     if (problem_config.sandbox_type == SandboxType::ISOLATE) {
         return stderr_content.find("Sandbox type not implemented: isolate") != std::string::npos;
-    }
+    }//这个沙箱还没搞
 
     return false;
 }
@@ -122,18 +122,22 @@ static std::string read_text_file(const std::string& file_path) {
         return "";
     }
 
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
+    std::ostringstream buffer;//字符串输出流
+    buffer << file.rdbuf();//把字符串缓冲区的全部写入
 
     return buffer.str();
 }
 
-static std::string lower_string(std::string value) {
+static std::string lower_string(std::string value) {//忽视大小写用的
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
 }
+
+//用来判断是不是生产模式的，也就是只允许用nsjail的安全模式————————————————————————
+//CPPJUDGE_PRODUCTION=1 ./build/cppjudge 启用生产模式
+//        ^运行前声明临时环境变量
 
 static bool is_enabled_environment_flag(const char* value) {
     if (value == nullptr) {
@@ -156,13 +160,14 @@ static bool is_production_environment_label(const char* value) {
     std::string normalized = lower_string(value);
     return normalized.rfind("prod", 0) == 0;
 }
-
+//std::getenv(XXX)可以查看名为XXX的环境变量的值
 static bool is_production_environment() {
     return is_enabled_environment_flag(std::getenv("CPPJUDGE_PRODUCTION")) ||
            is_production_environment_label(std::getenv("CPPJUDGE_ENV"));
 }
+//用来判断是不是生产模式的，也就是只允许用nsjail的安全模式————————————————————————
 
-static bool validate_sandbox_for_environment(
+static bool validate_sandbox_for_environment(//检测沙箱是否合适
     const ProblemConfig& config,
     bool production_mode,
     std::string& error
@@ -178,7 +183,7 @@ static bool validate_sandbox_for_environment(
     }
 
     std::string preflight_error;
-    if (!sandbox_preflight_check(config.sandbox_type, preflight_error)) {
+    if (!sandbox_preflight_check(config.sandbox_type, preflight_error)) {//看看环境变量里有没有nsjail
         error = "Sandbox preflight failed for " +
                 sandbox_type_to_string(config.sandbox_type) +
                 ": " +
@@ -188,7 +193,7 @@ static bool validate_sandbox_for_environment(
 
     return true;
 }
-
+//从题目json里面读信息用的————————————————————————————————————————————————————————
 static bool load_string_config_field(
     const json& problem_json,
     const std::string& name,
@@ -265,8 +270,9 @@ static bool load_nonnegative_double_config_field(
     target = parsed_value;
     return true;
 }
+//从题目json里面读信息用的————————————————————————————————————————————————————————
 
-static bool validate_problem_config(
+static bool validate_problem_config(//检测下题目数据是否合法
     const ProblemConfig& config,
     std::string& error
 ) {
@@ -303,7 +309,7 @@ static bool validate_problem_config(
     return true;
 }
 
-static ProblemConfig load_problem_config(
+static ProblemConfig load_problem_config(//加载题目
     const std::string& problem_dir,
     std::string& error
 ) {
@@ -311,7 +317,7 @@ static ProblemConfig load_problem_config(
     fs::path config_path = fs::path(problem_dir) / "problem.json";
 
     if (!fs::exists(config_path)) {
-        return config;
+        return config;//没有就用默认配置
     }
 
     std::ifstream config_file(config_path);
@@ -374,12 +380,12 @@ static ProblemConfig load_problem_config(
         validate_problem_config(config, error);
     } catch (const std::exception& e) {
         error = "Invalid problem.json: " + std::string(e.what());
-    }
+    }//用来兜底，错误信息基本全写到error里面了
 
     return config;
 }
 
-static std::string make_run_id() {
+static std::string make_run_id() {//生成一个提交结果的ID
     auto now = std::chrono::system_clock::now();
     std::time_t now_time = std::chrono::system_clock::to_time_t(now);
 
@@ -402,7 +408,7 @@ static void write_log_file(
 
     std::ofstream run_log_file(judge_log_file);
     run_log_file << std::setw(4) << log_json << std::endl;
-
+    //std::setw(4)限制宽度为4的倍数
     std::ofstream latest_log_file(JUDGE_LOG_FILE);
     latest_log_file << std::setw(4) << log_json << std::endl;
 }
@@ -417,12 +423,12 @@ static bool parse_int_arg(
         size_t parsed_chars = 0;
         int parsed_value = std::stoi(value, &parsed_chars);
 
-        if (parsed_chars != std::string(value).size()) {
+        if (parsed_chars != std::string(value).size()) {//防止出现123abc这样部分数字的情况
             error = "Invalid integer for " + name + ": " + value;
             return false;
         }
 
-        if (parsed_value <= 0) {
+        if (parsed_value <= 0) {//必须正整数
             error = "Invalid integer for " + name + ": " + value + ", must be positive";
             return false;
         }
@@ -447,8 +453,8 @@ void judge(int argc, char* argv[]) {
         problem_dir = argv[2];
     }
 
-    std::string problem_config_error;
-    std::string argument_error;
+    std::string problem_config_error;//写题目配置文件错误
+    std::string argument_error;//写命令行参数错误
     ProblemConfig problem_config = load_problem_config(problem_dir, problem_config_error);
     bool production_mode = is_production_environment();
 
@@ -458,7 +464,8 @@ void judge(int argc, char* argv[]) {
         problem_config.time_limit_ms,
         argument_error
     )) {
-        // handled after log_json is initialized
+        // 如果命令行提供时间限制，则覆盖 problem.json 中的 time_limit_ms
+        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
     }
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 4 && !parse_int_arg(
@@ -467,7 +474,7 @@ void judge(int argc, char* argv[]) {
         problem_config.memory_limit_mb,
         argument_error
     )) {
-        // handled after log_json is initialized
+        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
     }
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 5 && !parse_int_arg(
@@ -476,7 +483,7 @@ void judge(int argc, char* argv[]) {
         problem_config.output_limit_mb,
         argument_error
     )) {
-        // handled after log_json is initialized
+        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
     }
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 6) {
@@ -494,10 +501,10 @@ void judge(int argc, char* argv[]) {
         problem_config.compile_time_limit_ms,
         argument_error
     )) {
-        // handled after log_json is initialized
+        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
     }
 
-    if (problem_config_error.empty() && argument_error.empty()) {
+    if (problem_config_error.empty() && argument_error.empty()) {//最终再检测下配置
         validate_problem_config(problem_config, argument_error);
     }
 
@@ -592,7 +599,7 @@ void judge(int argc, char* argv[]) {
         write_log_file(judge_log_file, log_json);
         return;
     }
-
+    //读取输入数据并排序
     std::vector<fs::path> input_files;
 
     for (const auto& entry : fs::directory_iterator(input_dir)) {
@@ -614,7 +621,7 @@ void judge(int argc, char* argv[]) {
         write_log_file(judge_log_file, log_json);
         return;
     }
-
+    //编译用户程序
     bool compile_ok = compile_cpp(
         submission_file,
         executable_file,
@@ -669,7 +676,7 @@ void judge(int argc, char* argv[]) {
             log_json["results"].push_back(case_json);
             continue;
         }
-
+        //获取运行结果
         RunInfo run_info = run_program(
             executable_file,
             input_path.string(),
@@ -702,7 +709,7 @@ void judge(int argc, char* argv[]) {
                 }
             }
         } else {
-            bool same = compare_output(
+            bool same = compare_output(//运行没问题就比较输出结果
                 user_output_file,
                 standard_output_file,
                 problem_config.compare_mode,

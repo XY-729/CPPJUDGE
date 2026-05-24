@@ -1,35 +1,27 @@
 # CPPJUDGE
 
-CPPJUDGE is a lightweight C++ judge for local learning, course projects, and
-trusted development environments. It compiles one C++ submission, runs it
-against problem test data, applies basic resource limits, compares outputs, and
-writes structured JSON logs for debugging.
+CPPJUDGE 是一个轻量级 C++ 判题内核，适合本地学习、课程项目和可信实验环境使用。它可以编译一份 C++ 提交，把程序运行在题目测试数据上，施加基础资源限制，比较输出结果，并写出结构化的 `judge_log.json` 方便调试。
 
-This project is currently a teaching-oriented / local-only judge. Its practical
-goal is to evolve toward a C++ judge backend suitable for trusted school or lab
-use. The built-in runner is useful for development and experiments, but it is
-not a product-grade security sandbox.
+当前项目仍然是教学导向、本地优先的判题原型。它的实际目标是逐步演进成适合学校或实验室可信环境使用的 C++ 判题后端。内置 runner 适合开发和实验，但不是产品级安全沙箱。
 
 ---
 
-## Project Overview / 项目简介
+## 项目简介
 
-CPPJUDGE is a small C++ online judge prototype focused on the C++ language. It
-supports:
+CPPJUDGE 是一个聚焦 C++ 语言的小型在线判题原型。目前支持：
 
-- compiling C++17 submissions
-- running submissions against multiple input/output test cases
-- time, memory, output, and compile-time limits
-- exact and floating-point output comparison
-- per-run artifact directories
-- detailed `judge_log.json` output
+- 编译 C++17 提交
+- 对多个输入/输出测试点运行提交程序
+- 运行时间、内存、输出大小和编译时间限制
+- 精确比较和浮点误差比较
+- 每次评测独立的运行目录
+- 详细的 `judge_log.json` 日志
 
-The current goal is to keep the core judge simple while preparing the runner
-architecture for future sandbox backends such as nsjail and isolate.
+当前设计目标是在保持核心判题流程简单的同时，为后续接入 `nsjail`、`isolate` 等沙箱后端做好结构准备。
 
 ---
 
-## Features / 功能特性
+## 功能特性
 
 - Compile Error
 - Accepted / Wrong Answer
@@ -38,15 +30,15 @@ architecture for future sandbox backends such as nsjail and isolate.
 - Output Limit Exceeded
 - Runtime Error
 - System Error
-- `exact` / `floating` compare mode
-- `sandbox_type`: `builtin` / `nsjail` / `isolate`
-- JSON judge log
-- isolated run directories under `build/runs/<run_id>/`
-- latest-log shortcut at `build/judge_log.json`
+- `exact` / `floating` 比较模式
+- `sandbox_type`: `builtin` (自己写的残废版)/ `nsjail` (接了一半)/ `isolate`(还没搞)
+- JSON 判题日志
+- `build/runs/<run_id>/` 下的独立运行目录
+- `build/judge_log.json` 最新日志快捷路径
 
 ---
 
-## Build / 构建
+## 构建
 
 ```bash
 mkdir -p build
@@ -55,7 +47,7 @@ cmake ..
 make
 ```
 
-On Rocky Linux / Fedora, install the basic build tools first if needed:
+Rocky Linux / Fedora 上如果缺少基础构建工具，可以先安装：
 
 ```bash
 sudo dnf install gcc-c++ make cmake
@@ -63,37 +55,36 @@ sudo dnf install gcc-c++ make cmake
 
 ---
 
-## Usage / 使用方法
+## 使用方法
 
 ```bash
 ./build/cppjudge [submission_file] [problem_dir] [time_limit_ms] [memory_limit_mb] [output_limit_mb] [compare_mode] [compile_time_limit_ms]
 ```
 
-Arguments:
+参数说明：
 
-- `submission_file`: C++ source file. Default: `submissions/solution.cpp`
-- `problem_dir`: problem directory. Default: `problems/A+B`
-- `time_limit_ms`: runtime limit in milliseconds, positive integer
-- `memory_limit_mb`: memory limit in MB, positive integer
-- `output_limit_mb`: output limit in MB, positive integer
-- `compare_mode`: `exact`, `floating`, or `float`
-- `compile_time_limit_ms`: compile timeout in milliseconds, positive integer
+- `submission_file`: C++ 源码文件，默认 `submissions/solution.cpp`
+- `problem_dir`: 题目目录，默认 `problems/A+B`
+- `time_limit_ms`: 运行时间限制，单位毫秒，必须是正整数
+- `memory_limit_mb`: 内存限制，单位 MB，必须是正整数
+- `output_limit_mb`: 输出大小限制，单位 MB，必须是正整数
+- `compare_mode`: `exact`、`floating` 或 `float`
+- `compile_time_limit_ms`: 编译超时时间，单位毫秒，必须是正整数
 
-Example:
+示例：
 
 ```bash
 ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000
 python3 -m json.tool build/judge_log.json
 ```
 
-Command-line arguments override matching values loaded from `problem.json`.
+命令行参数会覆盖 `problem.json` 中对应的配置项。
 
 ---
 
-## Problem Format / 题目目录格式
+## 题目目录格式
 
-Each problem directory contains a `problem.json` file and matching input/output
-files:
+每个题目目录包含一个 `problem.json`，以及成对的输入/输出文件：
 
 ```text
 problems/A+B/
@@ -106,257 +97,221 @@ problems/A+B/
     2.out
 ```
 
-Input files use the `.in` extension. For each `input/<case>.in`, CPPJUDGE
-expects a corresponding `output/<case>.out`. Missing standard output files are
-treated as `System Error` because that indicates incomplete problem data.
+输入文件使用 `.in` 后缀。对于每个 `input/<case>.in`，CPPJUDGE 期望存在对应的 `output/<case>.out`。如果标准输出文件缺失，会判为 `System Error`，因为这表示题目数据不完整。
 
 ---
 
-## problem.json Example
+## problem.json 示例
 
 ```json
 {
-    "title": "A+B",
-    "time_limit_ms": 1000,
-    "memory_limit_mb": 128,
-    "output_limit_mb": 1,
-    "compile_time_limit_ms": 5000,
-    "compare_mode": "floating",
-    "float_abs_eps": 1e-6,
-    "float_rel_eps": 1e-6,
-    "sandbox_type": "builtin"
+    title: A+B,
+    time_limit_ms: 1000,
+    memory_limit_mb: 128,
+    output_limit_mb: 1,
+    compile_time_limit_ms: 5000,
+    compare_mode: floating,
+    float_abs_eps: 1e-6,
+    float_rel_eps: 1e-6,
+    sandbox_type: builtin
 }
 ```
 
-Supported config values:
+支持的配置项：
 
-- `time_limit_ms`, `memory_limit_mb`, `output_limit_mb`,
-  `compile_time_limit_ms`: positive integers
-- `compare_mode`: `exact`, `floating`, or `float`
-- `float_abs_eps`, `float_rel_eps`: non-negative numbers
-- `sandbox_type`: `builtin`, `nsjail`, or `isolate`
+- `time_limit_ms`、`memory_limit_mb`、`output_limit_mb`、`compile_time_limit_ms`: 正整数
+- `compare_mode`: `exact`、`floating` 或 `float`
+- `float_abs_eps`、`float_rel_eps`: 非负数字
+- `sandbox_type`: `builtin`、`nsjail` 或 `isolate`
 
-Invalid config types or values are reported as `System Error` and written to
-the `error` field in `judge_log.json`.
+如果配置类型或取值不合法，会判为 `System Error`，并把错误信息写入 `judge_log.json` 的 `error` 字段。
 
 ---
 
-## Verdicts / 评测结果
+## 评测结果
 
-- `Accepted`: the submission passed all test cases.
-- `Wrong Answer`: the submission finished normally but output differed from the standard answer.
-- `Time Limit Exceeded`: the submission exceeded the runtime limit.
-- `Memory Limit Exceeded`: the submission exceeded the memory limit.
-- `Output Limit Exceeded`: the submission exceeded the output size limit.
-- `Runtime Error`: the user program crashed or exited abnormally.
-- `Compile Error`: the submission failed to compile.
-- `System Error`: the judge configuration, test data, sandbox backend, or local execution environment failed.
+- `Accepted`: 所有测试点通过。
+- `Wrong Answer`: 用户程序正常结束，但输出与标准答案不同。
+- `Time Limit Exceeded`: 用户程序超过运行时间限制。
+- `Memory Limit Exceeded`: 用户程序超过内存限制。
+- `Output Limit Exceeded`: 用户程序超过输出大小限制。
+- `Runtime Error`: 用户程序崩溃或异常退出。
+- `Compile Error`: 提交源码编译失败。
+- `System Error`: 判题配置、题目数据、沙箱后端或本地执行环境出错。
 
-`Runtime Error` is reserved for user-program failures. `System Error` is used
-for judge-side problems such as invalid `problem.json`, missing input/output
-directories, missing answer files, or unimplemented sandbox backends.
+`Runtime Error` 只用于用户程序本身的运行错误。`System Error` 用于判题侧问题，例如非法 `problem.json`、缺失输入/输出目录、缺失标准答案文件、沙箱不可用或后端未实现。
 
 ---
 
-## Sandbox / 沙箱说明
+## 沙箱说明
 
-CPPJUDGE currently exposes three sandbox backend names:
+CPPJUDGE 当前暴露三个沙箱后端名称：
 
-- `builtin`: implemented, used by default
-- `nsjail`: MVP runner implemented; requires the external `nsjail` binary
-- `isolate`: reserved backend, not implemented yet
+- `builtin`: 已实现，默认用于本地开发和 CI 回归测试
+- `nsjail`: MVP 版本已实现，需要系统安装外部 `nsjail` 可执行文件
+- `isolate`: 预留后端，尚未实现
 
-`builtin` is the default and remains the path used by CI. The `nsjail` backend
-can execute submissions through `fork` + `execvp("nsjail", ...)`. The current
-MVP profile now uses a per-run `sandbox_root` instead of exposing the whole host
-root as the jail root. It bind-mounts the compiled solution read-only, the
-per-run `user_output` directory read/write, and a small set of dynamic-linker
-files needed by ordinary C++ binaries read-only. It also disables procfs inside
-the jail.
+`builtin` 是默认路径，也仍然是 GitHub Actions 默认回归测试使用的路径。它适合本地开发、课程演示和可信环境调试，但不能作为产品级安全沙箱。
 
-The current nsjail dynamic-library mounts are minimal and C++ oriented. They are
-enough for the current regression programs, but they are not a general dependency
-solution for every possible C++ binary or future multi-language support.
-Dependency detection or a managed minimal rootfs should be improved later.
+`nsjail` 后端现在覆盖两个阶段：
 
-The nsjail backend also applies basic rlimits for address space, output file
-size, core dumps, CPU time, open files, and process count. Its memory behavior is
-currently based on `RLIMIT_AS` with a small loader headroom. Stronger and more
-precise MLE enforcement still needs cgroup v2.
+- 编译阶段：把用户源码复制到每次运行目录中的 `submission.cpp`，通过 `nsjail` 调用 `/usr/bin/g++` 编译出 `solution`。
+- 运行阶段：把编译出的 `solution` 只读挂载进运行沙箱，再按测试点运行。
 
-This is still not a final product-grade sandbox profile: it does not yet provide
-a complete minimal rootfs, seccomp policy, cgroup memory enforcement, or explicit
-low-privilege user mapping. `isolate` is still a placeholder and returns
-`System Error`.
+运行阶段的 nsjail MVP 使用每次运行独立的 `sandbox_root`，而不是把宿主机根目录暴露给 jail。它只读挂载编译后的 `solution`、读写挂载本次运行的 `user_output` 目录，并只读挂载普通 C++ 动态链接所需的一小组库文件。同时，运行沙箱内禁用了 procfs。
 
-The `builtin` runner provides a basic local execution wrapper:
+当前 nsjail 的动态库挂载仍然是面向 C++ 的最小集合，足够覆盖现有回归测试，但还不是通用依赖方案。后续如果支持更多语言或更复杂的 C++ 依赖，需要做依赖扫描，或者维护一个受控的最小 rootfs。
 
-- child-process execution
-- stdin/stdout/stderr redirection
-- process-group cleanup with `SIGKILL`
-- `RLIMIT_AS` virtual address-space limit
-- `RLIMIT_FSIZE` output file-size limit
-- `RLIMIT_CORE = 0` to disable core dumps
-- `RLIMIT_NOFILE = 64` open-file limit
-- `RLIMIT_NPROC = 16` process-count guard where supported
-- `RLIMIT_CPU` fallback for CPU timeouts
-- `/proc/<pid>/status` memory monitoring
+nsjail 后端目前施加基础 rlimit，包括地址空间、输出文件大小、core dump、CPU 时间、打开文件数和进程数。内存限制主要依赖 `RLIMIT_AS`，带有少量动态链接器启动余量。更精确的 MLE 仍然需要接入 cgroup v2。
 
-These checks are useful for local testing but are not equivalent to a full
-Linux sandbox. The builtin runner currently has the more detailed MLE behavior
-through `RLIMIT_AS`, `/proc` VmSize monitoring, and `bad_alloc` detection. The
-nsjail path now has execution, filesystem, network-isolation, and basic
-`RLIMIT_AS` memory coverage, but precise nsjail MLE still needs cgroup v2.
+当前 nsjail 仍然不是最终产品级沙箱配置：还缺完整最小 rootfs、seccomp 策略、cgroup 内存强约束，以及明确的低权限用户映射。`isolate` 仍然只是占位后端，会返回 `System Error`。
+
+`builtin` runner 提供基础本地执行包装：
+
+- 子进程执行
+- stdin/stdout/stderr 重定向
+- 进程组清理和 `SIGKILL`
+- `RLIMIT_AS` 虚拟地址空间限制
+- `RLIMIT_FSIZE` 输出文件大小限制
+- `RLIMIT_CORE = 0` 禁止 core dump
+- `RLIMIT_NOFILE = 64` 打开文件数限制
+- 支持时使用 `RLIMIT_NPROC = 16` 做进程数保护
+- `RLIMIT_CPU` 作为 CPU 时间兜底限制
+- 通过 `/proc/<pid>/status` 监控内存
+
+这些检查对本地测试有帮助，但不等价于完整 Linux 沙箱。builtin runner 没有命名空间隔离、文件系统隔离、网络隔离、seccomp 或 cgroup 资源隔离。
 
 ---
 
-## Security Notice / 安全性说明
+## 安全性说明
 
-CPPJUDGE is currently a teaching-oriented / local-development judge. The
-`builtin` runner is not a product-grade security sandbox.
+CPPJUDGE 当前仍然是教学导向、本地开发优先的判题系统。`builtin` runner 不是产品级安全沙箱。
 
-The current builtin runner does not provide:
+当前 builtin runner 不提供：
 
-- Linux namespace isolation
-- seccomp syscall filtering
-- cgroup v2 resource isolation
-- chroot / pivot_root filesystem isolation
-- network namespace isolation
-- dedicated low-privilege user isolation
-- full container isolation
+- Linux namespace 隔离
+- seccomp 系统调用过滤
+- cgroup v2 资源隔离
+- chroot / pivot_root 文件系统隔离
+- 网络 namespace 隔离
+- 专用低权限用户隔离
+- 完整容器隔离
 
-Do not expose the current version directly to the public internet. Do not use
-it to run arbitrary untrusted submissions from unknown users in production.
+不要把当前版本直接暴露到公网。不要用 builtin runner 在生产环境运行来自未知用户的任意提交。
 
-Future sandbox work is expected to integrate mature backends such as nsjail or
-isolate, plus cgroup/seccomp/network/filesystem isolation.
+编译阶段也需要沙箱。虽然编译阶段没有运行学生程序，但编译器会用判题机权限处理学生可控源码。恶意源码可能通过 `#include` 尝试读取宿主机文件，或者通过模板、宏、临时文件和链接阶段消耗资源。仅有编译时间限制不能防止文件读取、磁盘消耗、内存消耗或编译器漏洞风险。因此，生产路径应该把编译和运行都视为不可信阶段。
+
+未来安全工作应继续围绕成熟沙箱后端、cgroup/seccomp、网络隔离、文件系统隔离和最小权限部署推进。
 
 ---
 
-## Run Tests / 运行测试
+## 运行测试
 
-Default regression tests:
+默认回归测试：
 
 ```bash
 bash scripts/run_tests.sh
 ```
 
-This script builds the project and checks the main verdict paths:
+该脚本会构建项目并检查主要判题路径：
 
 - AC / WA / TLE / MLE / OLE / RE / CE
-- selected `System Error` cases
-- latest `build/judge_log.json`
-- per-run `run_id` and `run_dir`
-- required debug fields in case results
+- 部分 `System Error` 场景
+- 最新 `build/judge_log.json`
+- 每次运行的 `run_id` 和 `run_dir`
+- 测试点结果中的必要调试字段
 
-Manual builtin runner security tests:
+手动 builtin 安全测试：
 
 ```bash
 bash scripts/run_security_tests.sh
 ```
 
-Manual nsjail MVP test:
+手动 nsjail MVP 测试：
 
 ```bash
 bash scripts/run_nsjail_tests.sh
 ```
 
-If `nsjail` is not installed, the nsjail script prints a skip message and exits
-successfully. When `nsjail` is available, it temporarily copies `problems/A+B`,
-sets `sandbox_type` to `nsjail`, and checks the current MVP paths for Accepted,
-Runtime Error, Time Limit Exceeded, Memory Limit Exceeded, Output Limit Exceeded,
-stderr capture, basic filesystem isolation, and network namespace isolation
-(`clone_newnet:true`).
+如果没有安装 `nsjail`，nsjail 测试脚本会打印跳过信息并成功退出。如果 `nsjail` 可用，脚本会临时复制 `problems/A+B`，把复制后的题目配置改为 `sandbox_type=nsjail`，然后检查当前 MVP 路径中的 Accepted、Runtime Error、Time Limit Exceeded、Memory Limit Exceeded、Output Limit Exceeded、stderr 捕获、基础文件系统隔离、网络 namespace 隔离，以及编译期文件系统隔离。
 
-The security test script exercises open-file limits, process-count behavior,
-core-dump blocking, and stderr capture. It includes fork-related behavior and
-is intentionally not part of the default GitHub Actions workflow. Run it only
-in a controlled local environment. The nsjail test is also manual-only and is
-not run by GitHub Actions.
+builtin 安全测试会覆盖打开文件数限制、进程数行为、core dump 禁止和 stderr 捕获。它包含 fork 相关行为，因此没有放进默认 GitHub Actions 流程。请只在受控本地环境运行。nsjail 测试同样是手动测试，不由 GitHub Actions 默认运行。
 
 ---
 
-## nsjail / cgroup Environment Check
+## nsjail / cgroup 环境检查
 
-Before wiring cgroup v2 options into the nsjail runner, inspect the target
-machine:
+在把 cgroup v2 参数真正接入 nsjail runner 之前，应先检查目标机器：
 
 ```bash
 bash scripts/check_nsjail_env.sh
 ```
 
-The script reports:
+该脚本会报告：
 
-- whether `nsjail` is installed
-- whether this `nsjail` build exposes cgroup-related flags
-- whether the host appears to use cgroup v2
-- the current process cgroup path
-- whether the current user can create a child cgroup under `/sys/fs/cgroup`
+- 是否安装了 `nsjail`
+- 当前 `nsjail` 构建是否支持 cgroup 相关参数
+- 宿主机是否看起来使用 cgroup v2
+- 当前进程所在的 cgroup 路径
+- 当前用户是否能在 `/sys/fs/cgroup` 下创建子 cgroup
 
-This script is diagnostic only. It does not modify judge behavior, it is not a
-required CI check, and cgroup failures do not make normal judging fail. If cgroup
-v2 is unavailable, the nsjail runner keeps using the current rlimit fallback.
-Future cgroup memory and pids enforcement should only be enabled after the
-machine passes the relevant precheck items.
+这个脚本只用于诊断。它不会改变判题行为，也不是必需 CI 检查。cgroup 检查失败不会让普通判题失败。如果 cgroup v2 不可用，nsjail runner 会继续使用当前 rlimit 兜底方案。未来只有在目标机器通过相关预检查后，才应启用 cgroup 内存和进程数强约束。
 
-To preview the nsjail cgroup arguments that a future runner integration would
-use, run:
+预览未来 nsjail cgroup 参数可以运行：
 
 ```bash
 bash scripts/preview_nsjail_cgroup_args.sh 128 16 0
 ```
 
-This dry-run script only prints arguments such as `--use_cgroupv2`,
-`--cgroup_mem_max`, and `--cgroup_pids_max`. It does not execute nsjail and does
-not change the current runner behavior.
+该 dry-run 脚本只打印类似 `--use_cgroupv2`、`--cgroup_mem_max`、`--cgroup_pids_max` 的参数，不会执行 nsjail，也不会改变当前 runner 行为。
 
 ---
 
-## Production Mode / 生产模式
+## 生产模式
 
-Set CPPJUDGE_ENV=production or CPPJUDGE_PRODUCTION=1 for production-like runs. In this mode CPPJUDGE fails closed before compilation or execution when the selected sandbox is unsafe or unavailable.
+设置 `CPPJUDGE_ENV=production` 或 `CPPJUDGE_PRODUCTION=1` 可启用生产模式保护。生产模式下，如果选中的沙箱不安全或不可用，CPPJUDGE 会在编译或运行前直接 fail closed。
 
-- builtin is rejected because it is not a real security sandbox.
-- isolate is rejected until the backend is implemented.
-- nsjail must be available in PATH before judging starts.
-- nsjail sandbox type also runs compilation through nsjail with the source copied into the per-run work directory.
+生产模式规则：
 
-This guardrail does not make the current nsjail MVP product-grade by itself; it prevents accidental fallback to unsafe or missing sandbox paths.
+- 拒绝 `builtin`，因为它不是真正的安全沙箱。
+- 拒绝 `isolate`，直到该后端真正实现。
+- 使用 `nsjail` 前必须能在 `PATH` 中找到 nsjail。
+- 当 `sandbox_type=nsjail` 时，编译阶段也会通过 nsjail 执行，源码会先复制到本次运行目录。
+
+生产模式本身不会把当前 nsjail MVP 变成产品级沙箱；它的作用是防止生产路径意外退回不安全或缺失的沙箱后端。
 
 ---
 
-## Continuous Integration / 持续集成
+## 持续集成
 
-GitHub Actions runs the default regression test script on every `push` and
-`pull_request`:
+GitHub Actions 会在每次 `push` 和 `pull_request` 时运行默认回归测试：
 
 ```bash
 bash scripts/run_tests.sh
 ```
 
-The manual security and nsjail MVP test scripts are not run by CI.
+手动安全测试和 nsjail MVP 测试默认不在 CI 中运行。
 
 ---
 
-## Roadmap / 路线图
+## 路线图
 
-- isolated run directories
-- configurable sandbox backend
-- nsjail integration
-- isolate integration
+- 独立运行目录
+- 可配置沙箱后端
+- nsjail 集成
+- isolate 集成
 - cgroup v2
-- seccomp whitelist
-- network isolation
-- filesystem isolation
-- web API / worker queue
+- seccomp 白名单
+- 网络隔离
+- 文件系统隔离
+- Web API / worker 队列
 
 ---
 
-## Author
+## 作者
 
 XY-729
 
-## nsjail Design Note
+## nsjail 设计说明
 
-The nsjail backend now has an MVP runner. It is still not a final product-grade
-sandbox profile. See docs/nsjail-plan.md for the hardening plan.
+nsjail 后端现在已经有 MVP runner，但还不是最终产品级沙箱配置。更详细的加固计划见 `docs/nsjail-plan.md`。
