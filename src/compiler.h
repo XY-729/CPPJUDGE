@@ -10,7 +10,7 @@ enum class CompileResult {
 };
 
 struct CompileInfo {
-    CompileResult result;
+    CompileResult result = CompileResult::OK;
     bool system_error = false;
     std::string error_message;
 };

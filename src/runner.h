@@ -17,9 +17,9 @@ enum class SandboxType {
 };
 
 struct RunInfo {
-    RunResult result;
-    int time_ms;
-    int memory_mb;
+    RunResult result = RunResult::OK;
+    int time_ms = 0;
+    int memory_mb = 0;
 
     bool system_error = false;
     std::string error_message;
