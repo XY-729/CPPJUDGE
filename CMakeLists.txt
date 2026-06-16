@@ -109,6 +109,50 @@ if(NSJAIL_EXECUTABLE)
         LABELS "regression;nsjail"
     )
 endif()
+
+# ── Structured results regression (C++) ───────────────────
+add_executable(
+    test_structured_results
+    tests/regression/test_structured_results.cpp
+)
+target_link_libraries(
+    test_structured_results
+    PRIVATE cppjudge_lib
+)
+add_test(
+    NAME test_regression_structured_results
+    COMMAND test_structured_results
+)
+set_tests_properties(test_regression_structured_results PROPERTIES
+    LABELS "regression;structured-error;portable"
+    TIMEOUT 60
+)
+
+# ── Stderr independence regression ───────────────────────
+add_test(
+    NAME test_regression_stderr_independence
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_stderr_independence.sh
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_regression_stderr_independence PROPERTIES
+    ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+    LABELS "regression;structured-error;portable"
+    TIMEOUT 120
+    RUN_SERIAL TRUE
+)
+
+# ── MLE classification regression ───────────────────────
+add_test(
+    NAME test_regression_mle_classification
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/test_regression_mle.sh
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_regression_mle_classification PROPERTIES
+    ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+    LABELS "regression;verdict;portable"
+    TIMEOUT 120
+    RUN_SERIAL TRUE
+)
 # ── Security tests (nsjail required) ──────────────────────
 if(NSJAIL_EXECUTABLE)
     add_test(

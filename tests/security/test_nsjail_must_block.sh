@@ -419,9 +419,12 @@ sleep 0.5
 HOST_SANITY_LEFTOVER_BEFORE=$(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null | wc -l || true)
 echo "  [INFO] HOST_SANITY_LEFTOVER_BEFORE_CLEANUP=$HOST_SANITY_LEFTOVER_BEFORE"
 
-if [[ "$HOST_SANITY_LEFTOVER_BEFORE" -eq 0 ]]; then
-    echo "  [WARN] Host sanity check: no orphans created, fixture may be self-cleaning"
+if [[ "$HOST_SANITY_LEFTOVER_BEFORE" -le 0 ]]; then
+    fail "Host orphan sanity check"
+else
+    pass "Host orphan sanity check"
 fi
+
 
 # Clean up sanity orphans
 while IFS= read -r pid; do
@@ -432,6 +435,10 @@ done < <(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null || true)
 sleep 0.3
 HOST_SANITY_LEFTOVER_AFTER=$(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null | wc -l || true)
 echo "  [INFO] HOST_SANITY_LEFTOVER_AFTER_CLEANUP=$HOST_SANITY_LEFTOVER_AFTER"
+
+if [[ "$HOST_SANITY_LEFTOVER_AFTER" -ne 0 ]]; then
+    fail "Host orphan sanity cleanup"
+fi
 
 # ── Actual nsjail orphan test ──
 cat > "$FIXTURE_DIR/spawn_orphans.cpp" << CPPEOF
@@ -460,32 +467,47 @@ int main() {
 CPPEOF
 
 if run_blocked_test spawn_orphans "CHILDREN_SPAWNED:"; then
-    echo "  [INFO] CHILDREN_SPAWNED: check stderr for count"
+    uo_dir=""
+    err_file=""
+    uo_dir="$(user_output_dir)"
+    err_file="$uo_dir/1.out.err"
+    children_spawned=$(grep -oP "CHILDREN_SPAWNED:\K\d+" "$err_file" 2>/dev/null || echo "")
 
-    # Poll for up to 3 seconds
-    LEFTOVER=0
-    for _ in $(seq 1 30); do
-        LEFTOVER="$(pgrep -x "$PROCESS_TOKEN" 2>/dev/null | wc -l || true)"
-        if [[ "$LEFTOVER" -eq 0 ]]; then
-            break
-        fi
-        sleep 0.1
-    done
-
-    echo "  [INFO] LEFTOVER_COUNT=$LEFTOVER"
-    if [[ "$LEFTOVER" -eq 0 ]]; then
-        pass "No leftover process"
+    if [[ -z "$children_spawned" ]]; then
+        echo "  [DEBUG] Could not parse CHILDREN_SPAWNED from stderr"
+        head -20 "$err_file" || true
+        fail "No leftover process"
+    elif [[ "$children_spawned" -le 0 ]]; then
+        echo "  [DEBUG] CHILDREN_SPAWNED=$children_spawned (expected > 0)"
+        fail "No leftover process"
     else
-        echo "  [WARN] Found residual(s) with token $PROCESS_TOKEN"
-        ps -e -o pid=,ppid=,comm=,args= | awk -v token="$PROCESS_TOKEN" '$3 == token'
+        echo "  [INFO] CHILDREN_SPAWNED=$children_spawned"
 
-        # Precise cleanup: only kill exact token match
-        mapfile -t leaked_pids < <(pgrep -x "$PROCESS_TOKEN" 2>/dev/null || true)
-        for pid in "${leaked_pids[@]}"; do
-            kill -KILL "$pid" 2>/dev/null || true
+        # Poll for up to 3 seconds
+        LEFTOVER=0
+        for _ in $(seq 1 30); do
+            LEFTOVER="$(pgrep -x "$PROCESS_TOKEN" 2>/dev/null | wc -l || true)"
+            if [[ "$LEFTOVER" -eq 0 ]]; then
+                break
+            fi
+            sleep 0.1
         done
 
-        fail "No leftover process"
+        echo "  [INFO] LEFTOVER_COUNT=$LEFTOVER"
+        if [[ "$LEFTOVER" -eq 0 ]]; then
+            pass "No leftover process"
+        else
+            echo "  [WARN] Found residual(s) with token $PROCESS_TOKEN"
+            ps -e -o pid=,ppid=,comm=,args= | awk -v token="$PROCESS_TOKEN" '$3 == token'
+
+            # Precise cleanup: only kill exact token match
+            mapfile -t leaked_pids < <(pgrep -x "$PROCESS_TOKEN" 2>/dev/null || true)
+            for pid in "${leaked_pids[@]}"; do
+                kill -KILL "$pid" 2>/dev/null || true
+            done
+
+            fail "No leftover process"
+        fi
     fi
 else
     fail "No leftover process"
