@@ -48,17 +48,83 @@ jobs:
       - name: Prepare build compatibility symlink
         run: ln -s build-ci build
 
+      - name: System diagnostics
+        run: |
+          set -x
+          uname -a
+          cat /etc/os-release || true
+          nproc
+          free -h || true
+          df -h
+          ulimit -a
+          sysctl vm.overcommit_memory || true
+          sysctl vm.max_map_count || true
+          g++ --version
+          gcc --version
+          cmake --version
+          ctest --version
+          bash --version
+          python3 --version
+          pwd
+          git status --short
+          find . -maxdepth 3 -type f | sort
+          set +x
+        shell: bash
+
       - name: Run portable test profile
+        id: portable
         run: |
           set -euo pipefail
-          bash scripts/run_all_tests.sh portable
 
-      - name: Upload CTest failure logs
-        if: failure()
+          LOG_FILE="portable-tests.log"
+          echo "=== Portable test profile start: $(date -u) ===" | tee "$LOG_FILE"
+
+          set +e
+          set -o pipefail
+          bash -x scripts/run_all_tests.sh portable \
+            2>&1 | tee -a "$LOG_FILE"
+          TEST_RC="${PIPESTATUS[0]}"
+          set -e
+
+          echo "" | tee -a "$LOG_FILE"
+          echo "=== Portable test profile exit code: $TEST_RC ===" | tee -a "$LOG_FILE"
+
+          # Show CTest failure log if present
+          BUILD_DIR="${CPPJUDGE_TEST_BUILD_DIR:-build-ci}"
+          LAST_LOG="$BUILD_DIR/Testing/Temporary/LastTest.log"
+          LAST_FAILED="$BUILD_DIR/Testing/Temporary/LastTestsFailed.log"
+
+          if [ -f "$LAST_LOG" ]; then
+            echo "" | tee -a "$LOG_FILE"
+            echo "=== LastTest.log ===" | tee -a "$LOG_FILE"
+            cat "$LAST_LOG" | tee -a "$LOG_FILE"
+          fi
+
+          if [ -f "$LAST_FAILED" ]; then
+            echo "" | tee -a "$LOG_FILE"
+            echo "=== LastTestsFailed.log ===" | tee -a "$LOG_FILE"
+            cat "$LAST_FAILED" | tee -a "$LOG_FILE"
+          fi
+
+          # Show any judge_log.json from the build directory
+          JUDGE_LOG="$BUILD_DIR/judge_log.json"
+          if [ -f "$JUDGE_LOG" ]; then
+            echo "" | tee -a "$LOG_FILE"
+            echo "=== judge_log.json ===" | tee -a "$LOG_FILE"
+            cat "$JUDGE_LOG" | tee -a "$LOG_FILE"
+          fi
+
+          exit "$TEST_RC"
+        shell: bash
+
+      - name: Upload portable test diagnostics
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ctest-failure-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: portable-test-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            portable-tests.log
             build-ci/Testing/Temporary/
-          if-no-files-found: ignore
+            build-ci/judge_log.json
+          if-no-files-found: warn
           retention-days: 7

@@ -229,4 +229,3 @@ fi
 echo "========================================"
 
 exit $OVERALL_RC
-DEBUG: CTest about to run with profile=$PROFILE count=$MATCH_COUNT
