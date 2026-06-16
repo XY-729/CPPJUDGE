@@ -4,9 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ -z "${CPPJUDGE_BIN:-}" ]; then
 mkdir -p build
 cmake -S . -B build >/dev/null
 cmake --build build >/dev/null
+fi
 
 tmp_solution="$(mktemp)"
 tmp_problem_config="$(mktemp)"

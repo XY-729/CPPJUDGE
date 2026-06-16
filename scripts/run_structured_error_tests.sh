@@ -69,12 +69,14 @@ run_judge() {
 }
 
 # ── Build ──────────────────────────────────────────────────
+if [ -z "${CPPJUDGE_BIN:-}" ]; then
 rm -rf build
 mkdir build
 cd build
 cmake .. >/dev/null 2>&1
 make >/dev/null 2>&1
 cd ..
+fi
 
 # ════════════════════════════════════════════════════════════
 # Tests 1-3: stderr fake tests -> MUST be Accepted

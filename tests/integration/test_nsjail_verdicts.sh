@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Integration test: nsjail sandbox verdict coverage
+# Uses pre-built CPPJUDGE_BIN, never rebuilds, never touches tracked files.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -11,14 +13,8 @@ fi
 
 source tests/support/test_helpers.sh
 
-# Backup
-SOL_BAK=$(mktemp); PJ_BAK=$(mktemp)
-cp submissions/solution.cpp "$SOL_BAK"
-cp problems/A+B/problem.json "$PJ_BAK"
-
-PROBLEM_DIR="problems/A+B_nsjail_int"
-rm -rf "$PROBLEM_DIR"
-cp -a problems/A+B "$PROBLEM_DIR"
+PROBLEM_DIR=$(mktemp -d -t cppjudge_nsjail_problem.XXXXXX)
+cp -a problems/A+B/* "$PROBLEM_DIR/"
 python3 -c "
 import json
 from pathlib import Path
@@ -28,20 +24,7 @@ data['sandbox_type'] = 'nsjail'
 with p.open('w') as f: json.dump(data, f, indent=4); f.write('\n')
 "
 
-do_cleanup() {
-    cp "$SOL_BAK" submissions/solution.cpp 2>/dev/null || true
-    cp "$PJ_BAK" problems/A+B/problem.json 2>/dev/null || true
-    rm -f "$SOL_BAK" "$PJ_BAK"
-    rm -rf "$PROBLEM_DIR" /tmp/cppjudge_int_*
-}
-
-# Build once
-rm -rf build
-mkdir build
-cd build
-cmake .. >/dev/null 2>&1
-make >/dev/null 2>&1
-cd ..
+cleanup_problem() { rm -rf "$PROBLEM_DIR"; }
 
 run_all() {
     echo "=== nsjail AC ==="
@@ -57,26 +40,24 @@ run_all() {
     test_verdict "nsjail_re" "Runtime Error" submissions/tests/re.cpp "$PROBLEM_DIR" 1000 128 1 floating 5000
 
     echo "=== nsjail MLE ==="
-    cp submissions/tests/mle.cpp submissions/solution.cpp
-    rm -f build/judge_log.json
-    "$CPPJUDGE_BIN" submissions/solution.cpp "$PROBLEM_DIR" 1000 128 1 floating 5000 >/dev/null 2>&1 || true
-    if [ -f build/judge_log.json ]; then
+    cp submissions/tests/mle.cpp "$SUBMISSION_COPY"
+    run_judge "$SUBMISSION_COPY" "$PROBLEM_DIR" 1000 128 1 floating 5000 || true
+    if [ -f "$JUDGE_LOG" ]; then
         verdict=$(judge_log_field "final_verdict")
         if [ "$verdict" = "Memory Limit Exceeded" ] || [ "$verdict" = "Time Limit Exceeded" ]; then
-            pass "nsjail_mle -> ${verdict} (MLE or TLE, see known nsjail MLE drift)"
+            pass "nsjail_mle -> ${verdict} (MLE or TLE, known nsjail MLE drift)"
         else
-            fail "nsjail_mle -> expected MLE or TLE (nsjail RLIMIT_AS drift), got ${verdict}"
+            fail "nsjail_mle -> expected MLE or TLE, got ${verdict}"
         fi
     else
-        fail "nsjail_mle -> no judge_log.json"
+        fail "nsjail_mle -> no judge log"
     fi
 
     echo "=== nsjail CE ==="
     test_verdict "nsjail_ce" "Compile Error" submissions/tests/ce.cpp "$PROBLEM_DIR" 1000 128 1 floating 5000
 }
 
-rc=0
-run_all || rc=$?
-do_cleanup
-if [ $rc -ne 0 ]; then exit $rc; fi
+rc=0; run_all || rc=$?
+cleanup_problem
 finish_tests
+if [ $rc -ne 0 ]; then exit $rc; fi

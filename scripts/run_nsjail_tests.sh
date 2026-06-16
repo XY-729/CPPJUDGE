@@ -9,12 +9,14 @@ if ! command -v nsjail >/dev/null 2>&1; then
     exit 0
 fi
 
+if [ -z "${CPPJUDGE_BIN:-}" ]; then
 rm -rf build
 mkdir build
 cd build
 cmake .. >/dev/null
 make >/dev/null
 cd ..
+fi
 
 problem_dir="problems/A+B_nsjail"
 cleanup() {

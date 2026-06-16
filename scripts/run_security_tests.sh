@@ -4,12 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ -z "${CPPJUDGE_BIN:-}" ]; then
 rm -rf build
 mkdir build
 cd build
 cmake ..
 make
 cd ..
+fi
 
 fail() {
     printf '[FAIL] %s\n' "$1"

@@ -349,11 +349,11 @@ static void write_log_file(
     const std::string& judge_log_file,
     const json& log_json
 ) {
-    fs::create_directories(BUILD_DIR);
+    fs::create_directories(get_build_dir());
 
     std::ofstream run_log_file(judge_log_file);
     run_log_file << std::setw(4) << log_json << std::endl;
-    std::ofstream latest_log_file(JUDGE_LOG_FILE);
+    std::ofstream latest_log_file(get_build_dir() + "/judge_log.json");
     latest_log_file << std::setw(4) << log_json << std::endl;
 }
 
@@ -430,13 +430,13 @@ void judge(int argc, char* argv[]) {
     std::string input_dir = problem_dir + "/input";
     std::string output_dir = problem_dir + "/output";
     std::string run_id = make_run_id();
-    std::string run_dir = BUILD_DIR + "/runs/" + run_id;
+    std::string run_dir = get_build_dir() + "/runs/" + run_id;
     std::string executable_file = run_dir + "/solution";
     std::string compile_error_file = run_dir + "/compile_error.txt";
     std::string user_output_dir = run_dir + "/user_output";
     std::string judge_log_file = run_dir + "/judge_log.json";
 
-    fs::create_directories(BUILD_DIR);
+    fs::create_directories(get_build_dir());
     fs::create_directories(user_output_dir);
 
     json log_json;

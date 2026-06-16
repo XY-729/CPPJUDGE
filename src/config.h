@@ -22,3 +22,9 @@ const int COMPILE_TIME_LIMIT_MS = 5000;
 
 const double FLOAT_ABS_EPS = 1e-6;
 const double FLOAT_REL_EPS = 1e-6;
+
+#include <cstdlib>
+inline std::string get_build_dir() {
+    const char* env = std::getenv("CPPJUDGE_BUILD_DIR");
+    return env ? std::string(env) : BUILD_DIR;
+}
