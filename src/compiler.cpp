@@ -3,6 +3,8 @@
 #include <chrono>
 #include <csignal>
 #include <filesystem>
+#include <cstring>
+#include <cerrno>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -166,6 +168,18 @@ CompileInfo compile_cpp_builtin_structured(
         return info;
     }
 
+
+    // Pre-open compile error file in parent
+    int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (err_fd < 0) {
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        info.result = CompileResult::SE;
+        info.system_error = true;
+        info.error_message = "Failed to open compile error file: " + error_file + " - " + std::string(strerror(errno));
+        return info;
+    }
+
     pid_t pid = fork();
 
     if (pid < 0) {
@@ -173,6 +187,7 @@ CompileInfo compile_cpp_builtin_structured(
         close(exec_error_pipe[1]);
         info.result = CompileResult::SE;
         info.system_error = true;
+        close(err_fd);
         info.error_message = "Failed to fork compiler process";
         return info;
     }
@@ -181,10 +196,6 @@ CompileInfo compile_cpp_builtin_structured(
         setpgid(0, 0);
         close(exec_error_pipe[0]);
 
-        int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (err_fd < 0) {
-            _exit(127);
-        }
 
         dup2(err_fd, STDERR_FILENO);
         dup2(err_fd, STDOUT_FILENO);
@@ -209,6 +220,7 @@ CompileInfo compile_cpp_builtin_structured(
     }
 
     close(exec_error_pipe[1]);
+    close(err_fd);
 
     int elapsed_ms = 0;
     int wait_rc = wait_for_compile_process_ex(pid, error_file, compile_time_limit_ms, elapsed_ms);
@@ -345,6 +357,18 @@ CompileInfo compile_cpp_nsjail_structured(
         return info;
     }
 
+
+    // Pre-open compile error file in parent
+    int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (err_fd < 0) {
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        info.result = CompileResult::SE;
+        info.system_error = true;
+        info.error_message = "Failed to open compile error file: " + error_file + " - " + std::string(strerror(errno));
+        return info;
+    }
+
     pid_t pid = fork();
 
     if (pid < 0) {
@@ -352,6 +376,7 @@ CompileInfo compile_cpp_nsjail_structured(
         close(exec_error_pipe[1]);
         info.result = CompileResult::SE;
         info.system_error = true;
+        close(err_fd);
         info.error_message = "Failed to fork nsjail compiler process";
         return info;
     }
@@ -360,10 +385,6 @@ CompileInfo compile_cpp_nsjail_structured(
         setpgid(0, 0);
         close(exec_error_pipe[0]);
 
-        int err_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (err_fd < 0) {
-            _exit(127);
-        }
 
         dup2(err_fd, STDERR_FILENO);
         dup2(err_fd, STDOUT_FILENO);
@@ -390,6 +411,7 @@ CompileInfo compile_cpp_nsjail_structured(
     }
 
     close(exec_error_pipe[1]);
+    close(err_fd);
 
     int elapsed_ms = 0;
     int wait_rc = wait_for_compile_process_ex(pid, error_file, compile_time_limit_ms, elapsed_ms);
@@ -430,25 +452,48 @@ CompileInfo compile_cpp_structured(
     int compile_time_limit_ms,
     SandboxType sandbox_type
 ) {
-    create_parent_directory_if_needed(executable_file);
-    create_parent_directory_if_needed(error_file);
-    create_empty_file(error_file);
-
-    if (sandbox_type == SandboxType::NSJAIL) {
-        return compile_cpp_nsjail_structured(
-            source_file,
-            executable_file,
-            error_file,
-            compile_time_limit_ms
-        );
+    try {
+        create_parent_directory_if_needed(executable_file);
+        create_parent_directory_if_needed(error_file);
+        create_empty_file(error_file);
+    } catch (const std::exception& exc) {
+        CompileInfo info;
+        info.result = CompileResult::SE;
+        info.system_error = true;
+        info.error_message = "Filesystem error during compile setup: " + std::string(exc.what());
+        return info;
     }
 
-    return compile_cpp_builtin_structured(
-        source_file,
-        executable_file,
-        error_file,
-        compile_time_limit_ms
-    );
+    switch (sandbox_type) {
+        case SandboxType::BUILTIN:
+            return compile_cpp_builtin_structured(
+                source_file,
+                executable_file,
+                error_file,
+                compile_time_limit_ms
+            );
+        case SandboxType::NSJAIL:
+            return compile_cpp_nsjail_structured(
+                source_file,
+                executable_file,
+                error_file,
+                compile_time_limit_ms
+            );
+        case SandboxType::ISOLATE: {
+            CompileInfo info;
+            info.result = CompileResult::SE;
+            info.system_error = true;
+            info.error_message = "Sandbox type not implemented for compile: isolate";
+            return info;
+        }
+        default: {
+            CompileInfo info;
+            info.result = CompileResult::SE;
+            info.system_error = true;
+            info.error_message = "Unknown sandbox type for compile: " + sandbox_type_to_string(sandbox_type);
+            return info;
+        }
+    }
 }
 
 // Legacy wrappers - kept for backward compatibility

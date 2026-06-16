@@ -5,7 +5,9 @@
 #include <cctype>
 #include <csignal>
 #include <cstdlib>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -106,8 +108,9 @@ void set_limit_or_exit(int resource, long long value) {
     }
 }
 
-void close_extra_file_descriptors() {
+void close_extra_file_descriptors(int preserved_fd = -1) {
     for (int fd = STDERR_FILENO + 1; fd < BUILTIN_NOFILE_LIMIT; ++fd) {
+        if (fd == preserved_fd) continue;
         close(fd);
     }
 }
@@ -501,6 +504,12 @@ static RunInfo run_program_builtin(
 
     int error_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
+    if (error_fd < 0) {
+        close(input_fd);
+        close(output_fd);
+        return make_system_error("Failed to open error file: " + error_file + " - " + std::string(strerror(errno)));
+    }
+
     int exec_error_pipe[2];
     if (pipe2(exec_error_pipe, O_CLOEXEC) < 0) {
         close(input_fd);
@@ -536,7 +545,7 @@ static RunInfo run_program_builtin(
             close(error_fd);
         }
 
-        close_extra_file_descriptors();
+        close_extra_file_descriptors(exec_error_pipe[1]);
         clear_child_environment();
         apply_builtin_child_limits(time_limit_ms);
 
@@ -724,7 +733,8 @@ static RunInfo run_program_nsjail(
     int time_limit_ms,
     int memory_limit_mb,
     int output_limit_mb
-) {
+)
+{
     SandboxRunConfig config = make_sandbox_run_config(
         executable_file,
         input_file,
@@ -746,9 +756,37 @@ static RunInfo run_program_nsjail(
         return make_system_error("Failed to create exec-error pipe for nsjail runner");
     }
 
+    // Pre-open files in parent so failures are detected as system errors.
+    int input_fd = open(config.input_file.c_str(), O_RDONLY);
+    if (input_fd < 0) {
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return make_system_error("Failed to open nsjail input file: " + config.input_file + " - " + std::string(strerror(errno)));
+    }
+
+    int output_fd = open(config.output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (output_fd < 0) {
+        close(input_fd);
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return make_system_error("Failed to open nsjail output file: " + config.output_file + " - " + std::string(strerror(errno)));
+    }
+
+    int error_fd = open(config.error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (error_fd < 0) {
+        close(input_fd);
+        close(output_fd);
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return make_system_error("Failed to open nsjail error file: " + config.error_file + " - " + std::string(strerror(errno)));
+    }
+
     pid_t pid = fork();
 
     if (pid < 0) {
+        close(input_fd);
+        close(output_fd);
+        close(error_fd);
         close(exec_error_pipe[0]);
         close(exec_error_pipe[1]);
         return make_system_error("Failed to fork nsjail runner process");
@@ -757,24 +795,6 @@ static RunInfo run_program_nsjail(
     if (pid == 0) {
         setpgid(0, 0);
         close(exec_error_pipe[0]);
-
-        int input_fd = open(config.input_file.c_str(), O_RDONLY);
-        if (input_fd < 0) {
-            _exit(1);
-        }
-
-        int output_fd = open(config.output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (output_fd < 0) {
-            close(input_fd);
-            _exit(1);
-        }
-
-        int error_fd = open(config.error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (error_fd < 0) {
-            close(input_fd);
-            close(output_fd);
-            _exit(1);
-        }
 
         dup2(input_fd, STDIN_FILENO);
         dup2(output_fd, STDOUT_FILENO);
@@ -813,6 +833,9 @@ static RunInfo run_program_nsjail(
         _exit(127);
     }
 
+    close(input_fd);
+    close(output_fd);
+    close(error_fd);
     close(exec_error_pipe[1]);
 
     auto start_time = std::chrono::steady_clock::now();
@@ -968,7 +991,6 @@ static RunInfo run_program_nsjail(
     info.result = RunResult::RE;
     return info;
 }
-
 static RunInfo run_program_isolate(
     const std::string& executable_file,
     const std::string& input_file,

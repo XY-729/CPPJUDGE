@@ -81,6 +81,15 @@ with open("build/judge_log.json", "r", encoding="utf-8") as f:
 PY
 }
 
+latest_error_field() {
+    python3 - <<'PY'
+import json
+with open("build/judge_log.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("error", ""))
+PY
+}
+
 latest_user_error_file() {
     python3 - <<'PY'
 import json
@@ -267,18 +276,13 @@ run_isolate_placeholder_case() {
 
     expect_latest_verdict "$name" "System Error"
 
-    local error_file
-    error_file="$(latest_user_error_file)"
-    if [[ -z "$error_file" ]]; then
-        fail "${name} -> missing results[0].user_error_file in build/judge_log.json"
-    fi
-
-    if [[ ! -f "$error_file" ]]; then
-        fail "${name} -> stderr file does not exist: ${error_file}"
-    fi
-
-    if ! grep -Fq "Sandbox type not implemented: isolate" "$error_file"; then
-        fail "${name} -> stderr file does not contain isolate placeholder message: ${error_file}"
+    # isolate now caught at compile phase; verify error field
+    local error_msg
+    error_msg="$(latest_error_field)"
+    if [[ -z "$error_msg" ]]; then
+        fail "${name} -> missing error field in judge_log.json"
+    elif [[ "$error_msg" != *"not implemented"* ]]; then
+        fail "${name} -> error does not mention not implemented: ${error_msg}"
     fi
 
     printf '[PASS] %-26s -> System Error\n' "$name"

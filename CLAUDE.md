@@ -4,34 +4,29 @@ CPPJUDGE 是一个轻量级 C++ 判题内核，目标演变成适合学校或实
 
 ## 远程开发环境
 
-所有代码读取、修改、构建和测试必须在远程 Linux 虚拟机中执行：
+本项目通过用户本机配置的 SSH alias 连接远程 Linux 虚拟机进行开发。
+不要在仓库中写死 IP 地址、用户名或私钥路径。
 
-- **SSH 用户**: `xiyuan729`
-- **SSH 密钥**: `~/.ssh/id_ed25519_cppjudge`
-- **远程主机**: `192.168.60.131`
-- **项目目录**: `/home/xiyuan729/cppjudge`
+典型 SSH 配置示例:
 
-SSH 别名 `cppjudge-vm` 未正确配置 IdentityFile，所有远程命令统一使用：
-
-```bash
-ssh -i ~/.ssh/id_ed25519_cppjudge xiyuan729@192.168.60.131 'cd /home/xiyuan729/cppjudge && <command>'
+```
+Host cppjudge-vm
+    HostName <vm-ip>
+    User <username>
+    IdentityFile ~/.ssh/<your-key>
 ```
 
-传输文件使用 scp 和相同密钥：
+所有代码读取、修改、构建和测试在远程虚拟机中执行:
 
 ```bash
-scp -i ~/.ssh/id_ed25519_cppjudge <local> xiyuan729@192.168.60.131:/home/xiyuan729/cppjudge/<path>
+ssh cppjudge-vm 'cd /home/<user>/cppjudge && <command>'
 ```
 
-## 环境信息
+传输文件:
 
-| 项目 | 值 |
-|------|-----|
-| OS | Rocky Linux 9.7, kernel 5.14.0 x86_64 |
-| GCC | 11.5.0 |
-| CMake | 3.26.5 |
-| nsjail | `/usr/local/bin/nsjail` |
-| 默认分支 | `master` |
+```bash
+scp <local> cppjudge-vm:/home/<user>/cppjudge/<path>
+```
 
 ## 构建
 
@@ -45,11 +40,12 @@ cmake --build build -j2
 ## 测试
 
 ```bash
-bash scripts/run_tests.sh              # 默认回归测试 (15项)
-bash scripts/run_security_tests.sh     # builtin 安全测试 (4项)
-bash scripts/run_nsjail_tests.sh       # nsjail MVP 测试 (9项, 需 nsjail)
-bash scripts/check_nsjail_env.sh       # nsjail/cgroup 环境诊断
-bash scripts/preview_nsjail_cgroup_args.sh  # cgroup 参数预览
+bash scripts/run_tests.sh                     # 默认回归测试
+bash scripts/run_security_tests.sh            # builtin 安全测试
+bash scripts/run_nsjail_tests.sh              # nsjail MVP 测试 (需 nsjail)
+bash scripts/run_structured_error_tests.sh    # 结构化错误回归测试
+bash scripts/check_nsjail_env.sh              # nsjail/cgroup 环境诊断
+bash scripts/preview_nsjail_cgroup_args.sh    # cgroup 参数预览
 ```
 
 ## 使用方法
@@ -75,9 +71,9 @@ src/
 └── comparer.h / comparer.cpp    # 输出比较 (exact/floating)
 include/
 └── json.hpp                     # nlohmann/json v3.12.0
-problems/A+B/                    # 默认示例题 (2个测试点)
+problems/A+B/                    # 默认示例题
 submissions/tests/               # 测试用例 (ac/wa/tle/mle/ole/re/ce)
-submissions/tests/security/      # 安全测试用例 (7个)
+submissions/tests/security/      # 安全测试用例
 scripts/                         # 测试和环境诊断脚本
 docs/nsjail-plan.md              # nsjail 加固计划
 ```
