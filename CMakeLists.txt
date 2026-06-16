@@ -109,3 +109,29 @@ if(NSJAIL_EXECUTABLE)
         LABELS "regression;nsjail"
     )
 endif()
+# ── Security tests (nsjail required) ──────────────────────
+if(NSJAIL_EXECUTABLE)
+    add_test(
+        NAME test_security_nsjail_must_block
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/security/test_nsjail_must_block.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set_tests_properties(test_security_nsjail_must_block PROPERTIES
+        ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+        LABELS "security;security-must-block;nsjail"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+    )
+
+    add_test(
+        NAME test_security_nsjail_known_gaps
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/security/test_nsjail_known_gaps.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set_tests_properties(test_security_nsjail_known_gaps PROPERTIES
+        ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+        LABELS "security;security-known-gap;nsjail"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+    )
+endif()
