@@ -18,19 +18,15 @@
 #include <unistd.h>
 #include <vector>
 
-// builtin 只适合本地开发和测试，不是完整安全沙箱。
-// 真正对外跑不可信代码时，应使用 nsjail / isolate 这类沙箱。
-
 #if defined(__linux__)
-// Linux/glibc 下环境变量由全局变量 environ 管理。
-extern char** environ;//environ 是一个 char**，指向环境变量字符串数组。
+extern char** environ;
 #endif
 
 namespace {
 
 static constexpr SandboxType DEFAULT_SANDBOX_TYPE = SandboxType::BUILTIN;
-static constexpr int BUILTIN_NOFILE_LIMIT = 64;//子进程最多允许打开 64 个文件描述符。
-static constexpr int BUILTIN_NPROC_LIMIT = 16;//子进程最多允许 16 个进程。
+static constexpr int BUILTIN_NOFILE_LIMIT = 64;
+static constexpr int BUILTIN_NPROC_LIMIT = 16;
 
 struct SandboxRunConfig {
     std::string executable_file;
@@ -58,7 +54,6 @@ int kb_to_mb(long kb) {
     if (kb <= 0) {
         return 0;
     }
-
     return static_cast<int>((kb + 1023) / 1024);
 }
 
@@ -66,98 +61,75 @@ bool reached_memory_limit(int memory_mb, int memory_limit_mb) {
     if (memory_limit_mb <= 0) {
         return false;
     }
-
     return memory_mb > memory_limit_mb;
 }
 
-bool file_contains(const std::string& file_path, const std::string& keyword) {//读文件里是否包含某个字符串
+bool file_contains(const std::string& file_path, const std::string& keyword) {
     std::ifstream file(file_path);
-
     if (!file.is_open()) {
         return false;
     }
-
     std::ostringstream buffer;
     buffer << file.rdbuf();
-
     return buffer.str().find(keyword) != std::string::npos;
 }
 
-int read_process_memory_mb(pid_t pid) {//builtin 读内存
+int read_process_memory_mb(pid_t pid) {
     std::ifstream status_file("/proc/" + std::to_string(pid) + "/status");
-
     if (!status_file.is_open()) {
         return 0;
     }
-
     std::string line;
-
     while (std::getline(status_file, line)) {
-        // RLIMIT_AS 限制的是虚拟地址空间，所以这里读 VmSize，不读 VmRSS
         if (line.rfind("VmSize:", 0) == 0) {
             std::istringstream iss(line);
-
             std::string key;
             long kb = 0;
             std::string unit;
-
             iss >> key >> kb >> unit;
-
             return kb_to_mb(kb);
         }
     }
-
     return 0;
 }
 
 int rusage_memory_mb(const struct rusage& usage) {
-    // Linux 下 ru_maxrss 单位是 KB
     return kb_to_mb(usage.ru_maxrss);
 }
 
 void set_limit_or_exit(int resource, long long value) {
     struct rlimit limit {};
-    //这是对 setrlimit 的封装
     limit.rlim_cur = static_cast<rlim_t>(value);
     limit.rlim_max = static_cast<rlim_t>(value);
-
     if (setrlimit(resource, &limit) != 0) {
         _exit(1);
     }
 }
 
-void close_extra_file_descriptors() {//关闭多余 fd,防止用户程序继承 judge 父进程打开的其他文件描述符。
+void close_extra_file_descriptors() {
     for (int fd = STDERR_FILENO + 1; fd < BUILTIN_NOFILE_LIMIT; ++fd) {
         close(fd);
     }
 }
 
-void clear_child_environment() {//清空环境变量
+void clear_child_environment() {
 #if defined(__linux__)
-    // 这里不调用 clearenv()，是因为在某些标准库/编译模式下，
-    // clearenv() 可能没有被头文件声明，容易导致编译问题。
-    // 直接把 environ 置空，相当于让当前进程没有环境变量。
-    // 后续 execl/execve 启动的新程序也不会继承 PATH、HOME、LD_PRELOAD 等变量。
-    // 注意：清空 PATH 后不能依赖 execlp/execvp 从 PATH 查找程序，
-    // 所以后续应使用 /usr/bin/nsjail 这类明确路径。
     environ = nullptr;
 #endif
 }
 
-bool is_executable_file(const std::filesystem::path& path) {//检查可执行文件是否存在
+bool is_executable_file(const std::filesystem::path& path) {
     return access(path.c_str(), X_OK) == 0;
 }
 
-bool executable_exists_in_path(const std::string& executable_name) {//这个函数检查某个程序是否能在 PATH 里找到。
+bool executable_exists_in_path(const std::string& executable_name) {
     if (executable_name.find("/") != std::string::npos) {
         return is_executable_file(executable_name);
     }
-
     const char* path_value = std::getenv("PATH");
     if (path_value == nullptr) {
         return false;
     }
-
     std::string path_list = path_value;
     std::size_t start = 0;
     while (start <= path_list.size()) {
@@ -166,35 +138,26 @@ bool executable_exists_in_path(const std::string& executable_name) {//这个函�
             start,
             end == std::string::npos ? std::string::npos : end - start
         );
-
         if (entry.empty()) {
             entry = ".";
         }
-
         if (is_executable_file(std::filesystem::path(entry) / executable_name)) {
             return true;
         }
-
         if (end == std::string::npos) {
             break;
         }
         start = end + 1;
     }
-
     return false;
 }
 
 void apply_builtin_child_limits(int time_limit_ms) {
     set_limit_or_exit(RLIMIT_CORE, 0);
     set_limit_or_exit(RLIMIT_NOFILE, BUILTIN_NOFILE_LIMIT);
-
 #if defined(RLIMIT_NPROC)
-    // Linux 下 RLIMIT_NPROC 按真实用户 ID 统计，root 可能会忽略它，
-    // 同一账号下已有进程也会影响这个限制。它只是本地测试用的基础 fork 炸弹防护，
-    // 不能替代 cgroup。
     set_limit_or_exit(RLIMIT_NPROC, BUILTIN_NPROC_LIMIT);
 #endif
-
     int cpu_seconds = (time_limit_ms + 999) / 1000 + 1;
     set_limit_or_exit(RLIMIT_CPU, cpu_seconds);
 }
@@ -204,41 +167,32 @@ int nsjail_time_limit_seconds(int time_limit_ms) {
 }
 
 int nsjail_address_space_limit_mb(int memory_limit_mb) {
-    // 动态链接的 C++ 程序启动时需要额外空间，但 nsjail 在 MVP 测试里
-    // 仍然应该能尽快拦住明显吃内存的提交。长期来看，cgroup v2
-    // 会是更合适的内存计量方式。
     static constexpr int NSJAIL_AS_HEADROOM_MB = 64;
     return memory_limit_mb + NSJAIL_AS_HEADROOM_MB;
 }
 
 std::string absolute_path_for_nsjail(const std::string& path) {
-    // 为 nsjail bind mount 获取真实绝对路径；失败时保留原路径
     char resolved_path[PATH_MAX];
-
     if (realpath(path.c_str(), resolved_path) != nullptr) {
         return resolved_path;
     }
-
     return path;
 }
 
 void create_empty_file_if_missing(const std::filesystem::path& path) {
-    // 如果文件不存在则创建空文件，用于预建 nsjail chroot 内的占位路径
     if (std::filesystem::exists(path)) {
         return;
     }
-
     std::ofstream file(path);
 }
 
 void create_relative_symlink_if_missing(
     const std::filesystem::path& target,
     const std::filesystem::path& link
-) {// 如果符号链接不存在则创建，模拟 /lib64 -> /usr/lib64 等目录结构
+) {
     if (std::filesystem::exists(link) || std::filesystem::is_symlink(link)) {
         return;
     }
-
     std::filesystem::create_directory_symlink(target, link);
 }
 
@@ -247,11 +201,10 @@ void add_bindmount_if_exists(
     const std::string& flag,
     const std::string& source,
     const std::string& destination
-) {//添加 bind mount 参数
+) {
     if (!std::filesystem::exists(source)) {
         return;
     }
-
     args.push_back(flag);
     args.push_back(absolute_path_for_nsjail(source) + ":" + destination);
 }
@@ -304,7 +257,6 @@ bool prepare_nsjail_filesystem(const SandboxRunConfig& config, std::string& erro
         error = "Failed to prepare nsjail filesystem: " + std::string(exc.what());
         return false;
     }
-
     return true;
 }
 
@@ -319,7 +271,6 @@ SandboxRunConfig make_sandbox_run_config(
     std::filesystem::path output_path(output_file);
     std::filesystem::path user_output_dir = output_path.parent_path();
     std::filesystem::path run_dir = user_output_dir.parent_path();
-
     std::filesystem::path sandbox_root_dir = run_dir / "sandbox_root";
 
     return {
@@ -339,13 +290,6 @@ SandboxRunConfig make_sandbox_run_config(
 }
 
 std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
-    // 第一版隔离方案：在每次运行独立的 chroot 中执行，只暴露
-    // 编译后的 solution、输出目录，以及 Rocky Linux 上普通 C++ 二进制
-    // 所需的一小组动态链接文件。
-    // TODO: 后续应通过可信依赖扫描器生成库列表，或提供受控的最小 rootfs。
-    // TODO: 增加 cgroup 内存限制，让 MLE 判定更强。
-    // TODO: 增加 seccomp 策略。
-    // TODO: 增加明确的低权限用户映射。
     std::vector<std::string> args = {
         "nsjail",
         "-Mo",
@@ -354,9 +298,6 @@ std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
         "--cwd",
         "/sandbox",
         "--disable_proc",
-        // 保留 nsjail 默认的网络 namespace 隔离。不要传
-        // --disable_clone_newnet，因为它会关闭网络 namespace。
-        // scripts/run_nsjail_tests.sh 会验证这种模式下 connect() 失败。
         "--time_limit",
         std::to_string(nsjail_time_limit_seconds(config.time_limit_ms)),
         "--rlimit_as",
@@ -395,20 +336,16 @@ std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
 
 std::string join_args_for_log(const std::vector<std::string>& args) {
     std::ostringstream oss;
-
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (i > 0) {
             oss << ' ';
         }
-
         const std::string& arg = args[i];
         bool needs_quotes = arg.find_first_of(" \t\n\"'") != std::string::npos;
-
         if (!needs_quotes) {
             oss << arg;
             continue;
         }
-
         oss << '"';
         for (char ch : arg) {
             if (ch == '"' || ch == '\\') {
@@ -418,17 +355,14 @@ std::string join_args_for_log(const std::vector<std::string>& args) {
         }
         oss << '"';
     }
-
     return oss.str();
 }
 
 std::string read_file_to_string(const std::string& file_path) {
     std::ifstream file(file_path);
-
     if (!file.is_open()) {
         return "";
     }
-
     std::ostringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
@@ -442,12 +376,10 @@ bool output_file_reached_limit(const std::string& output_file, int output_limit_
     if (output_limit_mb <= 0) {
         return false;
     }
-
     try {
         if (!std::filesystem::exists(output_file)) {
             return false;
         }
-
         std::uintmax_t output_limit_bytes =
             static_cast<std::uintmax_t>(output_limit_mb) * 1024 * 1024;
         return std::filesystem::file_size(output_file) >= output_limit_bytes;
@@ -457,11 +389,21 @@ bool output_file_reached_limit(const std::string& output_file, int output_limit_
 }
 
 void kill_process_group(pid_t pid) {
-    // 先杀进程组，防止用户程序 fork 子进程逃逸
     kill(-pid, SIGKILL);
-
-    // 兜底再杀主进程
     kill(pid, SIGKILL);
+}
+
+// Helper: create an SE RunInfo with consistent defaults
+static RunInfo make_system_error(const std::string& message) {
+    RunInfo info;
+    info.result = RunResult::SE;
+    info.time_ms = 0;
+    info.memory_mb = 0;
+    info.system_error = true;
+    info.error_message = message;
+    info.exit_code = -1;
+    info.signal = -1;
+    return info;
 }
 
 } // namespace
@@ -478,6 +420,8 @@ std::string run_result_to_string(RunResult result) {
             return "OLE";
         case RunResult::RE:
             return "RE";
+        case RunResult::SE:
+            return "SE";
         default:
             return "UNKNOWN";
     }
@@ -498,15 +442,12 @@ std::string sandbox_type_to_string(SandboxType type) {
 
 SandboxType sandbox_type_from_string(const std::string& type) {
     std::string normalized = to_lower(type);
-
     if (normalized == "nsjail") {
         return SandboxType::NSJAIL;
     }
-
     if (normalized == "isolate") {
         return SandboxType::ISOLATE;
     }
-
     return SandboxType::BUILTIN;
 }
 
@@ -517,14 +458,11 @@ bool is_valid_sandbox_type(const std::string& type) {
            normalized == "isolate";
 }
 
-
 bool sandbox_preflight_check(SandboxType type, std::string& error) {
     error.clear();
-
     if (type == SandboxType::BUILTIN) {
         return true;
     }
-
     if (type == SandboxType::NSJAIL) {
         if (!executable_exists_in_path("nsjail")) {
             error = "nsjail executable not found in PATH";
@@ -532,11 +470,9 @@ bool sandbox_preflight_check(SandboxType type, std::string& error) {
         }
         return true;
     }
-
     if (type == SandboxType::ISOLATE) {
         return true;
     }
-
     error = "Unknown sandbox type: " + sandbox_type_to_string(type);
     return false;
 }
@@ -549,39 +485,53 @@ static RunInfo run_program_builtin(
     int memory_limit_mb,
     int output_limit_mb
 ) {
+    std::string error_file = output_file + ".err";
+
+    // Pre-open files in parent so failures are detected as system errors.
+    int input_fd = open(input_file.c_str(), O_RDONLY);
+    if (input_fd < 0) {
+        return make_system_error("Failed to open input file: " + input_file);
+    }
+
+    int output_fd = open(output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (output_fd < 0) {
+        close(input_fd);
+        return make_system_error("Failed to open output file: " + output_file);
+    }
+
+    int error_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+    int exec_error_pipe[2];
+    if (pipe2(exec_error_pipe, O_CLOEXEC) < 0) {
+        close(input_fd);
+        close(output_fd);
+        if (error_fd >= 0) close(error_fd);
+        return make_system_error("Failed to create exec-error pipe");
+    }
+
     pid_t pid = fork();
 
     if (pid < 0) {
-        return {RunResult::RE, 0, 0};
+        close(input_fd);
+        close(output_fd);
+        if (error_fd >= 0) close(error_fd);
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return make_system_error("Failed to fork runner process");
     }
 
     if (pid == 0) {
         setpgid(0, 0);
-
-        int input_fd = open(input_file.c_str(), O_RDONLY);
-        if (input_fd < 0) {
-            _exit(1);
-        }
-
-        int output_fd = open(output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (output_fd < 0) {
-            close(input_fd);
-            _exit(1);
-        }
-
-        std::string error_file = output_file + ".err";
-        int error_fd = open(error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        close(exec_error_pipe[0]);
 
         dup2(input_fd, STDIN_FILENO);
         dup2(output_fd, STDOUT_FILENO);
-
         if (error_fd >= 0) {
             dup2(error_fd, STDERR_FILENO);
         }
 
         close(input_fd);
         close(output_fd);
-
         if (error_fd >= 0) {
             close(error_fd);
         }
@@ -591,11 +541,7 @@ static RunInfo run_program_builtin(
         apply_builtin_child_limits(time_limit_ms);
 
         if (memory_limit_mb > 0) {
-            // 不能直接把 RLIMIT_AS 设成题目的内存限制。
-            // 动态链接的 C++ 程序启动时需要额外虚拟地址空间；
-            // 这种限制太小会导致 execl / 动态链接阶段失败，最后被误判成 RE。
             int address_space_limit_mb = memory_limit_mb + 256;
-
             long long memory_bytes = 1LL * address_space_limit_mb * 1024 * 1024;
             set_limit_or_exit(RLIMIT_AS, memory_bytes);
         }
@@ -611,14 +557,22 @@ static RunInfo run_program_builtin(
             static_cast<char*>(nullptr)
         );
 
-        _exit(1);
+        // exec failed - signal parent through pipe
+        char err = 1;
+        ssize_t written = write(exec_error_pipe[1], &err, 1);
+        (void)written;
+        close(exec_error_pipe[1]);
+        _exit(127);
     }
 
-    auto start_time = std::chrono::steady_clock::now();
+    close(input_fd);
+    close(output_fd);
+    if (error_fd >= 0) close(error_fd);
+    close(exec_error_pipe[1]);
 
+    auto start_time = std::chrono::steady_clock::now();
     int status = 0;
     struct rusage usage {};
-
     int peak_memory_mb = 0;
 
     while (true) {
@@ -636,7 +590,8 @@ static RunInfo run_program_builtin(
         }
 
         if (wait_result == -1) {
-            return {RunResult::RE, elapsed_ms, 0};
+            close(exec_error_pipe[0]);
+            return make_system_error("wait4 failed for runner process");
         }
 
         int current_memory_mb = read_process_memory_mb(pid);
@@ -652,10 +607,14 @@ static RunInfo run_program_builtin(
                     end_time - start_time
                 ).count()
             );
-
             int memory_mb = std::max(peak_memory_mb, rusage_memory_mb(usage));
 
-            return {RunResult::MLE, final_time_ms, memory_mb};
+            RunInfo info;
+            info.result = RunResult::MLE;
+            info.time_ms = final_time_ms;
+            info.memory_mb = memory_mb;
+            close(exec_error_pipe[0]);
+            return info;
         }
 
         if (elapsed_ms > time_limit_ms) {
@@ -668,10 +627,14 @@ static RunInfo run_program_builtin(
                     end_time - start_time
                 ).count()
             );
-
             int memory_mb = std::max(peak_memory_mb, rusage_memory_mb(usage));
 
-            return {RunResult::TLE, final_time_ms, memory_mb};
+            RunInfo info;
+            info.result = RunResult::TLE;
+            info.time_ms = final_time_ms;
+            info.memory_mb = memory_mb;
+            close(exec_error_pipe[0]);
+            return info;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -683,10 +646,27 @@ static RunInfo run_program_builtin(
             end_time - start_time
         ).count()
     );
-
     int memory_mb = std::max(peak_memory_mb, rusage_memory_mb(usage));
 
-    std::string error_file = output_file + ".err";
+    // Check if exec failed (child wrote to pipe)
+    char exec_err = 0;
+    ssize_t n = read(exec_error_pipe[0], &exec_err, 1);
+    close(exec_error_pipe[0]);
+
+    if (n > 0) {
+        return make_system_error("Failed to execute solution: " + executable_file);
+    }
+
+    RunInfo info;
+    info.time_ms = final_time_ms;
+    info.memory_mb = memory_mb;
+
+    if (WIFEXITED(status)) {
+        info.exit_code = WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        info.signal = WTERMSIG(status);
+    }
 
     bool bad_alloc_error =
         file_contains(error_file, "bad_alloc") ||
@@ -695,45 +675,46 @@ static RunInfo run_program_builtin(
 
     if (WIFEXITED(status)) {
         int exit_code = WEXITSTATUS(status);
-
         if (exit_code == 0) {
-            return {RunResult::OK, final_time_ms, memory_mb};
+            info.result = RunResult::OK;
+            return info;
         }
-
         if (bad_alloc_error || reached_memory_limit(memory_mb, memory_limit_mb)) {
-            return {RunResult::MLE, final_time_ms, memory_mb};
+            info.result = RunResult::MLE;
+            return info;
         }
-
-        return {RunResult::RE, final_time_ms, memory_mb};
+        info.result = RunResult::RE;
+        return info;
     }
 
     if (WIFSIGNALED(status)) {
         int sig = WTERMSIG(status);
-
         if (sig == SIGXFSZ) {
-            return {RunResult::OLE, final_time_ms, memory_mb};
+            info.result = RunResult::OLE;
+            return info;
         }
-
         if (sig == SIGXCPU) {
-            return {RunResult::TLE, final_time_ms, memory_mb};
+            info.result = RunResult::TLE;
+            return info;
         }
-
         if (sig == SIGKILL) {
             if (reached_memory_limit(memory_mb, memory_limit_mb)) {
-                return {RunResult::MLE, final_time_ms, memory_mb};
+                info.result = RunResult::MLE;
+                return info;
             }
-
-            return {RunResult::TLE, final_time_ms, memory_mb};
+            info.result = RunResult::TLE;
+            return info;
         }
-
         if (bad_alloc_error || reached_memory_limit(memory_mb, memory_limit_mb)) {
-            return {RunResult::MLE, final_time_ms, memory_mb};
+            info.result = RunResult::MLE;
+            return info;
         }
-
-        return {RunResult::RE, final_time_ms, memory_mb};
+        info.result = RunResult::RE;
+        return info;
     }
 
-    return {RunResult::RE, final_time_ms, memory_mb};
+    info.result = RunResult::RE;
+    return info;
 }
 
 static RunInfo run_program_nsjail(
@@ -757,19 +738,25 @@ static RunInfo run_program_nsjail(
     if (!prepare_nsjail_filesystem(config, prepare_error)) {
         std::ofstream error_stream(config.error_file, std::ios::app);
         error_stream << prepare_error << "\n";
-        return {RunResult::RE, 0, 0};
+        return make_system_error(prepare_error);
+    }
+
+    int exec_error_pipe[2];
+    if (pipe2(exec_error_pipe, O_CLOEXEC) < 0) {
+        return make_system_error("Failed to create exec-error pipe for nsjail runner");
     }
 
     pid_t pid = fork();
 
     if (pid < 0) {
-        std::ofstream error_stream(config.error_file, std::ios::app);
-        error_stream << "Failed to fork nsjail runner process\n";
-        return {RunResult::RE, 0, 0};
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        return make_system_error("Failed to fork nsjail runner process");
     }
 
     if (pid == 0) {
         setpgid(0, 0);
+        close(exec_error_pipe[0]);
 
         int input_fd = open(config.input_file.c_str(), O_RDONLY);
         if (input_fd < 0) {
@@ -816,12 +803,19 @@ static RunInfo run_program_nsjail(
         argv.push_back(nullptr);
 
         execvp("nsjail", argv.data());
+
+        // exec failed
         dprintf(STDERR_FILENO, "Failed to execute nsjail\n");
+        char err = 1;
+        ssize_t written = write(exec_error_pipe[1], &err, 1);
+        (void)written;
+        close(exec_error_pipe[1]);
         _exit(127);
     }
 
-    auto start_time = std::chrono::steady_clock::now();
+    close(exec_error_pipe[1]);
 
+    auto start_time = std::chrono::steady_clock::now();
     int status = 0;
     struct rusage usage {};
 
@@ -840,7 +834,8 @@ static RunInfo run_program_nsjail(
         }
 
         if (wait_result == -1) {
-            return {RunResult::RE, elapsed_ms, 0};
+            close(exec_error_pipe[0]);
+            return make_system_error("wait4 failed for nsjail runner process");
         }
 
         if (output_file_reached_limit(config.output_file, config.output_limit_mb)) {
@@ -854,8 +849,13 @@ static RunInfo run_program_nsjail(
                 ).count()
             );
             int memory_mb = rusage_memory_mb(usage);
+            close(exec_error_pipe[0]);
 
-            return {RunResult::OLE, final_time_ms, memory_mb};
+            RunInfo info;
+            info.result = RunResult::OLE;
+            info.time_ms = final_time_ms;
+            info.memory_mb = memory_mb;
+            return info;
         }
 
         if (elapsed_ms > config.time_limit_ms) {
@@ -869,12 +869,16 @@ static RunInfo run_program_nsjail(
                 ).count()
             );
             int memory_mb = rusage_memory_mb(usage);
+            close(exec_error_pipe[0]);
 
+            RunInfo info;
+            info.result = RunResult::TLE;
+            info.time_ms = final_time_ms;
+            info.memory_mb = memory_mb;
             if (output_file_reached_limit(config.output_file, config.output_limit_mb)) {
-                return {RunResult::OLE, final_time_ms, memory_mb};
+                info.result = RunResult::OLE;
             }
-
-            return {RunResult::TLE, final_time_ms, memory_mb};
+            return info;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -887,6 +891,27 @@ static RunInfo run_program_nsjail(
         ).count()
     );
     int memory_mb = rusage_memory_mb(usage);
+
+    // Check if nsjail exec itself failed
+    char exec_err = 0;
+    ssize_t n = read(exec_error_pipe[0], &exec_err, 1);
+    close(exec_error_pipe[0]);
+
+    if (n > 0) {
+        return make_system_error("Failed to execute nsjail for running phase");
+    }
+
+    RunInfo info;
+    info.time_ms = final_time_ms;
+    info.memory_mb = memory_mb;
+
+    if (WIFEXITED(status)) {
+        info.exit_code = WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        info.signal = WTERMSIG(status);
+    }
+
     std::string stderr_content = read_file_to_string(config.error_file);
 
     bool stderr_says_tle =
@@ -902,49 +927,46 @@ static RunInfo run_program_nsjail(
 
     if (WIFEXITED(status)) {
         int exit_code = WEXITSTATUS(status);
-
         if (exit_code == 0) {
-            return {RunResult::OK, final_time_ms, memory_mb};
+            info.result = RunResult::OK;
+            return info;
         }
-
-        if (exit_code == 127 && stderr_content.find("Failed to execute nsjail") != std::string::npos) {
-            return {RunResult::RE, final_time_ms, memory_mb};
-        }
-
         if (stderr_says_tle) {
-            return {RunResult::TLE, final_time_ms, memory_mb};
+            info.result = RunResult::TLE;
+            return info;
         }
-
         if (stderr_says_mle) {
-            return {RunResult::MLE, final_time_ms, memory_mb};
+            info.result = RunResult::MLE;
+            return info;
         }
-
         if (stderr_says_ole) {
-            return {RunResult::OLE, final_time_ms, memory_mb};
+            info.result = RunResult::OLE;
+            return info;
         }
-
-        return {RunResult::RE, final_time_ms, memory_mb};
+        info.result = RunResult::RE;
+        return info;
     }
 
     if (WIFSIGNALED(status)) {
         int sig = WTERMSIG(status);
-
         if (sig == SIGXFSZ) {
-            return {RunResult::OLE, final_time_ms, memory_mb};
+            info.result = RunResult::OLE;
+            return info;
         }
-
         if (sig == SIGKILL) {
             if (final_time_ms > config.time_limit_ms) {
-                return {RunResult::TLE, final_time_ms, memory_mb};
+                info.result = RunResult::TLE;
+                return info;
             }
-
-            return {RunResult::RE, final_time_ms, memory_mb};
+            info.result = RunResult::RE;
+            return info;
         }
-
-        return {RunResult::RE, final_time_ms, memory_mb};
+        info.result = RunResult::RE;
+        return info;
     }
 
-    return {RunResult::RE, final_time_ms, memory_mb};
+    info.result = RunResult::RE;
+    return info;
 }
 
 static RunInfo run_program_isolate(
@@ -965,8 +987,7 @@ static RunInfo run_program_isolate(
     std::ofstream error_file(output_file + ".err", std::ios::trunc);
     error_file << "Sandbox type not implemented: isolate\n";
 
-    // TODO: 接入 isolate 沙箱 runner。
-    return {RunResult::RE, 0, 0};
+    return make_system_error("Sandbox type not implemented: isolate");
 }
 
 RunInfo run_program(
@@ -1026,13 +1047,8 @@ RunInfo run_program(
                 output_limit_mb
             );
         default:
-            return run_program_builtin(
-                executable_file,
-                input_file,
-                output_file,
-                time_limit_ms,
-                memory_limit_mb,
-                output_limit_mb
+            return make_system_error(
+                "Unknown sandbox type: " + sandbox_type_to_string(sandbox_type)
             );
     }
 }

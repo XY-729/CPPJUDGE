@@ -26,7 +26,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-enum class FinalVerdict {//最终判断
+enum class FinalVerdict {
     AC,
     WA,
     TLE,
@@ -37,7 +37,7 @@ enum class FinalVerdict {//最终判断
     CE
 };
 
-struct ProblemConfig {//题目配置
+struct ProblemConfig {
     std::string title = PROBLEM_NAME;
     int time_limit_ms = TIME_LIMIT_MS;
     int memory_limit_mb = MEMORY_LIMIT_MB;
@@ -84,66 +84,34 @@ static FinalVerdict run_result_to_final_verdict(RunResult result) {
             return FinalVerdict::RE;
         case RunResult::OK:
             return FinalVerdict::AC;
+        case RunResult::SE:
+            return FinalVerdict::SE;
         default:
-            return FinalVerdict::RE;
+            return FinalVerdict::SE;
     }
-}
-
-static std::string read_text_file(const std::string& file_path);
-
-static bool is_sandbox_system_error(
-    const ProblemConfig& problem_config,
-    const RunInfo& run_info,
-    const std::string& user_error_file
-) {
-    if (problem_config.sandbox_type == SandboxType::BUILTIN ||
-        run_info.result != RunResult::RE) {
-        return false;
-    }//用的自己写的残疾沙箱或者不是RE
-
-    std::string stderr_content = read_text_file(user_error_file);
-
-    if (problem_config.sandbox_type == SandboxType::NSJAIL) {
-        return stderr_content.find("Failed to execute nsjail") != std::string::npos ||
-               stderr_content.find("Failed to prepare nsjail filesystem") != std::string::npos;
-    }//用的nsjail沙箱
-
-    if (problem_config.sandbox_type == SandboxType::ISOLATE) {
-        return stderr_content.find("Sandbox type not implemented: isolate") != std::string::npos;
-    }//这个沙箱还没搞
-
-    return false;
 }
 
 static std::string read_text_file(const std::string& file_path) {
     std::ifstream file(file_path);
-
     if (!file.is_open()) {
         return "";
     }
-
-    std::ostringstream buffer;//字符串输出流
-    buffer << file.rdbuf();//把字符串缓冲区的全部写入
-
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
     return buffer.str();
 }
 
-static std::string lower_string(std::string value) {//忽视大小写用的
+static std::string lower_string(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
 }
 
-//用来判断是不是生产模式的，也就是只允许用nsjail的安全模式————————————————————————
-//CPPJUDGE_PRODUCTION=1 ./build/cppjudge 启用生产模式
-//        ^运行前声明临时环境变量
-
 static bool is_enabled_environment_flag(const char* value) {
     if (value == nullptr) {
         return false;
     }
-
     std::string normalized = lower_string(value);
     return !normalized.empty() &&
            normalized != "0" &&
@@ -156,18 +124,16 @@ static bool is_production_environment_label(const char* value) {
     if (value == nullptr) {
         return false;
     }
-
     std::string normalized = lower_string(value);
     return normalized.rfind("prod", 0) == 0;
 }
-//std::getenv(XXX)可以查看名为XXX的环境变量的值
+
 static bool is_production_environment() {
     return is_enabled_environment_flag(std::getenv("CPPJUDGE_PRODUCTION")) ||
            is_production_environment_label(std::getenv("CPPJUDGE_ENV"));
 }
-//用来判断是不是生产模式的，也就是只允许用nsjail的安全模式————————————————————————
 
-static bool validate_sandbox_for_environment(//检测沙箱是否合适
+static bool validate_sandbox_for_environment(
     const ProblemConfig& config,
     bool production_mode,
     std::string& error
@@ -176,24 +142,21 @@ static bool validate_sandbox_for_environment(//检测沙箱是否合适
         error = "Production mode requires a real sandbox; builtin is not allowed";
         return false;
     }
-
     if (production_mode && config.sandbox_type == SandboxType::ISOLATE) {
         error = "Production mode cannot use isolate because it is not implemented";
         return false;
     }
-
     std::string preflight_error;
-    if (!sandbox_preflight_check(config.sandbox_type, preflight_error)) {//看看环境变量里有没有nsjail
+    if (!sandbox_preflight_check(config.sandbox_type, preflight_error)) {
         error = "Sandbox preflight failed for " +
                 sandbox_type_to_string(config.sandbox_type) +
                 ": " +
                 preflight_error;
         return false;
     }
-
     return true;
 }
-//从题目json里面读信息用的————————————————————————————————————————————————————————
+
 static bool load_string_config_field(
     const json& problem_json,
     const std::string& name,
@@ -203,13 +166,11 @@ static bool load_string_config_field(
     if (!problem_json.contains(name)) {
         return true;
     }
-
     const json& value = problem_json.at(name);
     if (!value.is_string()) {
         error = "Invalid problem.json field " + name + ": expected string";
         return false;
     }
-
     target = value.get<std::string>();
     return true;
 }
@@ -223,24 +184,20 @@ static bool load_positive_int_config_field(
     if (!problem_json.contains(name)) {
         return true;
     }
-
     const json& value = problem_json.at(name);
     if (!value.is_number_integer()) {
         error = "Invalid problem.json field " + name + ": expected positive integer";
         return false;
     }
-
     long long parsed_value = value.get<long long>();
     if (parsed_value <= 0) {
         error = "Invalid problem.json field " + name + ": must be positive";
         return false;
     }
-
     if (parsed_value > std::numeric_limits<int>::max()) {
         error = "Invalid problem.json field " + name + ": value is too large";
         return false;
     }
-
     target = static_cast<int>(parsed_value);
     return true;
 }
@@ -254,25 +211,21 @@ static bool load_nonnegative_double_config_field(
     if (!problem_json.contains(name)) {
         return true;
     }
-
     const json& value = problem_json.at(name);
     if (!value.is_number()) {
         error = "Invalid problem.json field " + name + ": expected non-negative number";
         return false;
     }
-
     double parsed_value = value.get<double>();
     if (parsed_value < 0) {
         error = "Invalid problem.json field " + name + ": must be non-negative";
         return false;
     }
-
     target = parsed_value;
     return true;
 }
-//从题目json里面读信息用的————————————————————————————————————————————————————————
 
-static bool validate_problem_config(//检测下题目数据是否合法
+static bool validate_problem_config(
     const ProblemConfig& config,
     std::string& error
 ) {
@@ -280,36 +233,30 @@ static bool validate_problem_config(//检测下题目数据是否合法
         error = "Invalid problem config: time_limit_ms must be positive";
         return false;
     }
-
     if (config.memory_limit_mb <= 0) {
         error = "Invalid problem config: memory_limit_mb must be positive";
         return false;
     }
-
     if (config.output_limit_mb <= 0) {
         error = "Invalid problem config: output_limit_mb must be positive";
         return false;
     }
-
     if (config.compile_time_limit_ms <= 0) {
         error = "Invalid problem config: compile_time_limit_ms must be positive";
         return false;
     }
-
     if (config.float_abs_eps < 0) {
         error = "Invalid problem config: float_abs_eps must be non-negative";
         return false;
     }
-
     if (config.float_rel_eps < 0) {
         error = "Invalid problem config: float_rel_eps must be non-negative";
         return false;
     }
-
     return true;
 }
 
-static ProblemConfig load_problem_config(//加载题目
+static ProblemConfig load_problem_config(
     const std::string& problem_dir,
     std::string& error
 ) {
@@ -317,7 +264,7 @@ static ProblemConfig load_problem_config(//加载题目
     fs::path config_path = fs::path(problem_dir) / "problem.json";
 
     if (!fs::exists(config_path)) {
-        return config;//没有就用默认配置
+        return config;
     }
 
     std::ifstream config_file(config_path);
@@ -351,7 +298,6 @@ static ProblemConfig load_problem_config(//加载题目
                 error = "Invalid problem.json field compare_mode: expected string";
                 return config;
             }
-
             std::string compare_mode = compare_mode_value.get<std::string>();
             if (!is_valid_compare_mode(compare_mode)) {
                 error = "Invalid compare_mode in problem.json: " + compare_mode +
@@ -367,7 +313,6 @@ static ProblemConfig load_problem_config(//加载题目
                 error = "Invalid problem.json field sandbox_type: expected string";
                 return config;
             }
-
             std::string sandbox_type = sandbox_type_value.get<std::string>();
             if (!is_valid_sandbox_type(sandbox_type)) {
                 error = "Invalid sandbox_type in problem.json: " + sandbox_type +
@@ -380,12 +325,12 @@ static ProblemConfig load_problem_config(//加载题目
         validate_problem_config(config, error);
     } catch (const std::exception& e) {
         error = "Invalid problem.json: " + std::string(e.what());
-    }//用来兜底，错误信息基本全写到error里面了
+    }
 
     return config;
 }
 
-static std::string make_run_id() {//生成一个提交结果的ID
+static std::string make_run_id() {
     auto now = std::chrono::system_clock::now();
     std::time_t now_time = std::chrono::system_clock::to_time_t(now);
 
@@ -408,7 +353,6 @@ static void write_log_file(
 
     std::ofstream run_log_file(judge_log_file);
     run_log_file << std::setw(4) << log_json << std::endl;
-    //std::setw(4)限制宽度为4的倍数
     std::ofstream latest_log_file(JUDGE_LOG_FILE);
     latest_log_file << std::setw(4) << log_json << std::endl;
 }
@@ -422,17 +366,14 @@ static bool parse_int_arg(
     try {
         size_t parsed_chars = 0;
         int parsed_value = std::stoi(value, &parsed_chars);
-
-        if (parsed_chars != std::string(value).size()) {//防止出现123abc这样部分数字的情况
+        if (parsed_chars != std::string(value).size()) {
             error = "Invalid integer for " + name + ": " + value;
             return false;
         }
-
-        if (parsed_value <= 0) {//必须正整数
+        if (parsed_value <= 0) {
             error = "Invalid integer for " + name + ": " + value + ", must be positive";
             return false;
         }
-
         target = parsed_value;
         return true;
     } catch (const std::exception&) {
@@ -448,43 +389,26 @@ void judge(int argc, char* argv[]) {
     if (argc > 1) {
         submission_file = argv[1];
     }
-
     if (argc > 2) {
         problem_dir = argv[2];
     }
 
-    std::string problem_config_error;//写题目配置文件错误
-    std::string argument_error;//写命令行参数错误
+    std::string problem_config_error;
+    std::string argument_error;
     ProblemConfig problem_config = load_problem_config(problem_dir, problem_config_error);
     bool production_mode = is_production_environment();
 
     if (problem_config_error.empty() && argc > 3 && !parse_int_arg(
-        argv[3],
-        "time_limit_ms",
-        problem_config.time_limit_ms,
-        argument_error
-    )) {
-        // 如果命令行提供时间限制，则覆盖 problem.json 中的 time_limit_ms
-        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
-    }
+        argv[3], "time_limit_ms", problem_config.time_limit_ms, argument_error
+    )) {}
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 4 && !parse_int_arg(
-        argv[4],
-        "memory_limit_mb",
-        problem_config.memory_limit_mb,
-        argument_error
-    )) {
-        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
-    }
+        argv[4], "memory_limit_mb", problem_config.memory_limit_mb, argument_error
+    )) {}
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 5 && !parse_int_arg(
-        argv[5],
-        "output_limit_mb",
-        problem_config.output_limit_mb,
-        argument_error
-    )) {
-        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
-    }
+        argv[5], "output_limit_mb", problem_config.output_limit_mb, argument_error
+    )) {}
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 6) {
         if (!is_valid_compare_mode(argv[6])) {
@@ -496,15 +420,10 @@ void judge(int argc, char* argv[]) {
     }
 
     if (problem_config_error.empty() && argument_error.empty() && argc > 7 && !parse_int_arg(
-        argv[7],
-        "compile_time_limit_ms",
-        problem_config.compile_time_limit_ms,
-        argument_error
-    )) {
-        // 若解析失败，只记录 argument_error，等日志对象初始化后统一处理
-    }
+        argv[7], "compile_time_limit_ms", problem_config.compile_time_limit_ms, argument_error
+    )) {}
 
-    if (problem_config_error.empty() && argument_error.empty()) {//最终再检测下配置
+    if (problem_config_error.empty() && argument_error.empty()) {
         validate_problem_config(problem_config, argument_error);
     }
 
@@ -541,24 +460,20 @@ void judge(int argc, char* argv[]) {
 
     if (!problem_config_error.empty()) {
         std::cout << problem_config_error << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = problem_config_error;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
 
     if (!argument_error.empty()) {
         std::cout << argument_error << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = argument_error;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
@@ -566,63 +481,54 @@ void judge(int argc, char* argv[]) {
     std::string sandbox_error;
     if (!validate_sandbox_for_environment(problem_config, production_mode, sandbox_error)) {
         std::cout << sandbox_error << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = sandbox_error;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
 
     if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
         std::cout << "Input directory not found: " << input_dir << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = "Input directory not found: " + input_dir;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
 
     if (!fs::exists(output_dir) || !fs::is_directory(output_dir)) {
         std::cout << "Output directory not found: " << output_dir << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = "Output directory not found: " + output_dir;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
-    //读取输入数据并排序
-    std::vector<fs::path> input_files;
 
+    std::vector<fs::path> input_files;
     for (const auto& entry : fs::directory_iterator(input_dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".in") {
             input_files.push_back(entry.path());
         }
     }
-
     std::sort(input_files.begin(), input_files.end());
 
     if (input_files.empty()) {
         std::cout << "No input files found in: " << input_dir << std::endl;
-
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
         log_json["error"] = "No input files found in: " + input_dir;
         log_json["passed"] = 0;
         log_json["total"] = 0;
-
         write_log_file(judge_log_file, log_json);
         return;
     }
-    //编译用户程序
-    bool compile_ok = compile_cpp(
+
+    // Compile with structured result
+    CompileInfo compile_info = compile_cpp_structured(
         submission_file,
         executable_file,
         compile_error_file,
@@ -630,10 +536,25 @@ void judge(int argc, char* argv[]) {
         problem_config.sandbox_type
     );
 
-    if (!compile_ok) {
-        std::cout << "\n========== Compile Error ==========" << std::endl;
-
+    if (compile_info.result != CompileResult::OK) {
         std::string compile_error = read_text_file(compile_error_file);
+
+        if (compile_info.system_error || compile_info.result == CompileResult::SE) {
+            std::cout << "\n========== System Error (Compile) ==========" << std::endl;
+            std::cout << compile_info.error_message << std::endl;
+            std::cout << compile_error;
+
+            log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::SE);
+            log_json["error"] = compile_info.error_message;
+            log_json["compile_error"] = compile_error;
+            log_json["passed"] = 0;
+            log_json["total"] = input_files.size();
+
+            write_log_file(judge_log_file, log_json);
+            return;
+        }
+
+        std::cout << "\n========== Compile Error ==========" << std::endl;
         std::cout << compile_error;
 
         log_json["final_verdict"] = final_verdict_to_string(FinalVerdict::CE);
@@ -650,7 +571,6 @@ void judge(int argc, char* argv[]) {
 
     for (const auto& input_path : input_files) {
         std::string case_name = input_path.stem().string();
-
         std::string standard_output_file = output_dir + "/" + case_name + ".out";
         std::string user_output_file = user_output_dir + "/" + case_name + ".out";
 
@@ -676,7 +596,7 @@ void judge(int argc, char* argv[]) {
             log_json["results"].push_back(case_json);
             continue;
         }
-        //获取运行结果
+
         RunInfo run_info = run_program(
             executable_file,
             input_path.string(),
@@ -691,25 +611,30 @@ void judge(int argc, char* argv[]) {
         case_json["time_ms"] = run_info.time_ms;
         case_json["memory_mb"] = run_info.memory_mb;
 
-        if (run_info.result != RunResult::OK) {
-            if (is_sandbox_system_error(problem_config, run_info, case_json["user_error_file"])) {
-                case_json["verdict"] = "SE";
-                case_json["message"] = "Sandbox runner failed: " +
-                                       sandbox_type_to_string(problem_config.sandbox_type);
+        if (run_info.exit_code >= 0) {
+            case_json["exit_code"] = run_info.exit_code;
+        }
+        if (run_info.signal >= 0) {
+            case_json["signal"] = run_info.signal;
+        }
 
-                if (final_verdict == FinalVerdict::AC) {
-                    final_verdict = FinalVerdict::SE;
-                }
-            } else {
-                case_json["verdict"] = run_result_to_string(run_info.result);
-                case_json["message"] = run_result_to_string(run_info.result);
+        if (run_info.result == RunResult::SE) {
+            case_json["verdict"] = "SE";
+            case_json["message"] = run_info.error_message;
+            case_json["system_error"] = true;
 
-                if (final_verdict == FinalVerdict::AC) {
-                    final_verdict = run_result_to_final_verdict(run_info.result);
-                }
+            if (final_verdict == FinalVerdict::AC) {
+                final_verdict = FinalVerdict::SE;
+            }
+        } else if (run_info.result != RunResult::OK) {
+            case_json["verdict"] = run_result_to_string(run_info.result);
+            case_json["message"] = run_result_to_string(run_info.result);
+
+            if (final_verdict == FinalVerdict::AC) {
+                final_verdict = run_result_to_final_verdict(run_info.result);
             }
         } else {
-            bool same = compare_output(//运行没问题就比较输出结果
+            bool same = compare_output(
                 user_output_file,
                 standard_output_file,
                 problem_config.compare_mode,

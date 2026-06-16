@@ -6,7 +6,8 @@ enum class RunResult {
     TLE,
     MLE,
     OLE,
-    RE
+    RE,
+    SE
 };
 
 enum class SandboxType {
@@ -19,6 +20,11 @@ struct RunInfo {
     RunResult result;
     int time_ms;
     int memory_mb;
+
+    bool system_error = false;
+    std::string error_message;
+    int exit_code = -1;
+    int signal = -1;
 };
 
 RunInfo run_program(
