@@ -179,7 +179,7 @@ for round in $(seq 1 "$REPEAT"); do
     ctest \
         --test-dir "$BUILD_DIR" \
         -j"$JOBS" \
-        --output-on-failure \
+        --output-on-failure -V \
         "${CTEST_LABEL_ARGS[@]}"
     RC=$?
     set -e
