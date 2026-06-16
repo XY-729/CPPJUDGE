@@ -29,3 +29,11 @@ Makefile
 *.DS_Store
 *.vscode/
 .vs/
+
+# ===============================
+# Claude Code local settings
+# ===============================
+.claude/settings.local.json
+.claude/**/*.local.*
+.claude/**/__pycache__/
+.claude/**/*.pyc
