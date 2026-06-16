@@ -66,7 +66,7 @@ run_security_case() {
 
     local output_file="/tmp/cppjudge_security_${name}.log"
     set +e
-    timeout 15s ./build/cppjudge "$source_file" problems/A+B 1000 128 1 floating 5000 >"$output_file" 2>&1
+    timeout 15s ${CPPJUDGE_BIN:-./build/cppjudge} "$source_file" problems/A+B 1000 128 1 floating 5000 >"$output_file" 2>&1
     local status=$?
     set -e
 

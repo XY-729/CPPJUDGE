@@ -59,7 +59,7 @@ require_error_contains() {
 run_judge() {
     local name="$1"; shift
     rm -f build/judge_log.json
-    ./build/cppjudge "$@" >"/tmp/cppjudge_se_${name}.log" 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} "$@" >"/tmp/cppjudge_se_${name}.log" 2>&1 || true
     if [ ! -f build/judge_log.json ]; then
         fail "${name} -> judge did not produce judge_log.json"; return 1
     fi
@@ -99,7 +99,7 @@ EMPTY_BIN=/tmp/cppjudge_se_tests/empty_bin
 rm -rf "$EMPTY_BIN"; mkdir -p "$EMPTY_BIN"
 set_solution submissions/tests/ac.cpp
 rm -f build/judge_log.json
-PATH="$EMPTY_BIN" ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t4.log 2>&1 || true
+PATH="$EMPTY_BIN" ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t4.log 2>&1 || true
 if [ -f build/judge_log.json ]; then
     require_verdict "Test4" "System Error"
     require_error_contains "Test4" "g++"
@@ -114,7 +114,7 @@ echo "=== Test 5A: nsjail not in PATH -> preflight SE ==="
 set_problem_sandbox nsjail
 set_solution submissions/tests/ac.cpp
 rm -f build/judge_log.json
-PATH="$EMPTY_BIN" ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t5a.log 2>&1 || true
+PATH="$EMPTY_BIN" ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t5a.log 2>&1 || true
 if [ -f build/judge_log.json ]; then
     actual=$(python3 -c "import json; print(json.load(open('build/judge_log.json')).get('final_verdict', ''))")
     error=$(python3 -c "import json; print(json.load(open('build/judge_log.json')).get('error', ''))")
@@ -142,7 +142,7 @@ if [ -x "$FAKE_BIN/nsjail" ]; then
     set_problem_sandbox nsjail
     set_solution submissions/tests/ac.cpp
     rm -f build/judge_log.json
-    PATH="$MIXED_PATH" ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t5b.log 2>&1 || true
+    PATH="$MIXED_PATH" ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_se_t5b.log 2>&1 || true
     if [ -f build/judge_log.json ]; then
         actual=$(python3 -c "import json; print(json.load(open('build/judge_log.json')).get('final_verdict', ''))")
         error=$(python3 -c "import json; print(json.load(open('build/judge_log.json')).get('error', ''))")
@@ -238,8 +238,8 @@ harness_log=/tmp/cppjudge_se_tests/harness_build.log
 set +e
 g++ -std=c++17 -I"$ROOT_DIR/src" \
     /tmp/cppjudge_se_tests/harness.cpp \
-    build/CMakeFiles/cppjudge.dir/src/runner.cpp.o \
-    build/CMakeFiles/cppjudge.dir/src/compiler.cpp.o \
+    build/CMakeFiles/cppjudge_lib.dir/src/runner.cpp.o \
+    build/CMakeFiles/cppjudge_lib.dir/src/compiler.cpp.o \
     -o /tmp/cppjudge_se_tests/harness >"$harness_log" 2>&1
 harness_build_rc=$?
 set -e

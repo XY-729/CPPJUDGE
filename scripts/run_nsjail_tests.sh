@@ -49,7 +49,7 @@ run_nsjail_case() {
     local expected="$3"
     local stderr_marker="${4:-}"
 
-    ./build/cppjudge "$submission" "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_nsjail_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} "$submission" "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_nsjail_${name}.log 2>&1 || true
 
     python3 - "$name" "$expected" "$stderr_marker" <<'PY'
 import json
@@ -123,7 +123,7 @@ run_nsjail_case "nsjail_net" "submissions/tests/security/network_access.cpp" "Ac
 
 run_nsjail_compile_isolation_case() {
     local name="nsjail_compile_fs"
-    ./build/cppjudge "submissions/tests/security/compile_include_passwd.cpp" "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_nsjail_\${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} "submissions/tests/security/compile_include_passwd.cpp" "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_nsjail_\${name}.log 2>&1 || true
 
     python3 - "$name" <<'PY'
 import json

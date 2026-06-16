@@ -165,7 +165,7 @@ run_verdict_case() {
 
     restore_problem_config
     cp "submissions/tests/${name}.cpp" submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "$expected"
     printf '[PASS] %-26s -> %s\n' "$name" "$expected"
@@ -177,7 +177,7 @@ run_invalid_sandbox_type_case() {
     restore_problem_config
     set_problem_sandbox_type invalid_sandbox
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -190,7 +190,7 @@ run_invalid_time_limit_type_case() {
     restore_problem_config
     set_problem_json_field time_limit_ms "\"abc\""
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -203,7 +203,7 @@ run_negative_float_abs_eps_case() {
     restore_problem_config
     set_problem_json_field float_abs_eps -1
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -216,7 +216,7 @@ run_invalid_compare_mode_case() {
     restore_problem_config
     set_problem_json_field compare_mode "\"wrong_mode\""
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -231,7 +231,7 @@ run_missing_input_dir_case() {
     rm -rf "$problem_dir"
     mkdir -p "${problem_dir}/output"
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -246,7 +246,7 @@ run_missing_output_dir_case() {
     mkdir -p "${problem_dir}/input"
     cp problems/A+B/input/1.in "${problem_dir}/input/1.in"
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -260,7 +260,7 @@ run_empty_input_dir_case() {
     rm -rf "$problem_dir"
     mkdir -p "${problem_dir}/input" "${problem_dir}/output"
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp "$problem_dir" 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
     printf '[PASS] %-26s -> System Error\n' "$name"
@@ -272,7 +272,7 @@ run_isolate_placeholder_case() {
     restore_problem_config
     set_problem_sandbox_type isolate
     cp submissions/tests/ac.cpp submissions/solution.cpp
-    ./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
+    ${CPPJUDGE_BIN:-./build/cppjudge} submissions/solution.cpp problems/A+B 1000 128 1 floating 5000 >/tmp/cppjudge_${name}.log 2>&1 || true
 
     expect_latest_verdict "$name" "System Error"
 
