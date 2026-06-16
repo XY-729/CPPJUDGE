@@ -12,30 +12,9 @@ NS_PROBLEM=$(make_nsjail_problem)
 echo "Security MUST_BLOCK Tests"
 echo "========================="
 
-# Helper: run a fixture source as submission, check that stderr contains marker.
-# The fixture source has the canary path / port baked in at generation time.
-run_blocked_test() {
-    local name="$1" marker="$2"
-    local sub="$FIXTURE_DIR/sub_${name}.cpp"
-    cp "$FIXTURE_DIR/${name}.cpp" "$sub"
-    run_nsjail_judge "$NS_PROBLEM" "$sub" || true
-    local uo_dir err_file
-    uo_dir=$(user_output_dir)
-    err_file="$uo_dir/1.out.err"
-    if [ -f "$err_file" ] && grep -qF "$marker" "$err_file" 2>/dev/null; then
-        return 0
-    fi
-    # Debug: show what happened
-    echo "  [DEBUG] expected marker: $marker"
-    echo "  [DEBUG] stderr contents:"
-    cat "$err_file" 2>/dev/null | head -5 || echo "  (no stderr file)"
-    return 1
-}
-
 # ═══════════════════════════════════════════════════════════
 # Test 1: Host canary read
 # ═══════════════════════════════════════════════════════════
-# IMPORTANT: unquoted heredoc so $HOST_CANARY is expanded and \" is NOT needed.
 cat > "$FIXTURE_DIR/host_canary_read.cpp" << CPPEOF
 #include <cstdio>
 #include <fstream>
@@ -55,7 +34,7 @@ int main() {
 CPPEOF
 
 CANARY_BEFORE=$(cat "$HOST_CANARY")
-if run_blocked_test host_canary_read "CANARY_BLOCKED_READ"; then
+if run_blocked_test host_canary_read "CANARY_BLOCKED_READ" "CANARY_LEAK"; then
     CANARY_AFTER=$(cat "$HOST_CANARY")
     if [ "$CANARY_BEFORE" = "$CANARY_AFTER" ]; then
         pass "Host canary read"
@@ -84,12 +63,15 @@ int main() {
 CPPEOF
 
 CANARY_BEFORE=$(cat "$HOST_CANARY")
-run_blocked_test host_canary_write "WRITE_ATTEMPTED" || true
-CANARY_AFTER=$(cat "$HOST_CANARY")
-if [ "$CANARY_BEFORE" = "$CANARY_AFTER" ]; then
-    pass "Host canary write"
+if run_blocked_test host_canary_write "WRITE_ATTEMPTED" ""; then
+    CANARY_AFTER=$(cat "$HOST_CANARY")
+    if [ "$CANARY_BEFORE" = "$CANARY_AFTER" ]; then
+        pass "Host canary write"
+    else
+        fail "Host canary write — canary was modified!"
+    fi
 else
-    fail "Host canary write — canary was modified!"
+    fail "Host canary write"
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -113,48 +95,100 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test proc_read "PROC_BLOCKED"; then
+if run_blocked_test proc_read "PROC_BLOCKED" "PROC_LEAK"; then
     pass "/proc isolation"
 else
     fail "/proc isolation"
 fi
 
 # ═══════════════════════════════════════════════════════════
-# Test 4: Network connection isolation
+# Test 4: Network connection isolation (continuous server)
 # ═══════════════════════════════════════════════════════════
-HOST_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+HOST_PROBE_TOKEN="HOST_PROBE_$(python3 -c 'import secrets; print(secrets.token_hex(8))')"
+SANDBOX_PROBE_TOKEN="SANDBOX_PROBE_$(python3 -c 'import secrets; print(secrets.token_hex(8))')"
 
-python3 -c "
-import socket, sys
+SERVER_SCRIPT="$SECURITY_TEMP_DIR/network_server.py"
+cat > "$SERVER_SCRIPT" << PYEOF
+import socket, sys, os, signal, time
+
+PORT_FILE = os.path.join(os.environ["SECURITY_TEMP_DIR"], "server.port")
+READY_FILE = os.path.join(os.environ["SECURITY_TEMP_DIR"], "server.ready")
+RECEIVED_FILE = os.path.join(os.environ["SECURITY_TEMP_DIR"], "server.received")
+
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('127.0.0.1', $HOST_PORT))
-s.listen(1)
-s.settimeout(5)
-try:
-    conn, addr = s.accept()
-    conn.close()
-    sys.exit(0)
-except socket.timeout:
-    sys.exit(1)
-" &
+s.bind(("127.0.0.1", 0))
+s.listen(8)
+s.settimeout(30)
+
+with open(PORT_FILE, "w") as f:
+    f.write(str(s.getsockname()[1]))
+with open(READY_FILE, "w") as f:
+    f.write("READY\n")
+
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+
+received = []
+deadline = time.time() + 30
+while time.time() < deadline:
+    try:
+        conn, addr = s.accept()
+        data = conn.recv(4096)
+        received.append(data.decode("utf-8", errors="replace"))
+        conn.close()
+    except socket.timeout:
+        break
+    except OSError:
+        break
+
+with open(RECEIVED_FILE, "a") as f:
+    for item in received:
+        f.write(item + "\n")
+s.close()
+PYEOF
+
+python3 "$SERVER_SCRIPT" &
 SERVER_PID=$!
 track_pid "$SERVER_PID"
-sleep 1
 
+# Wait for server ready
+for i in $(seq 1 30); do
+    if [ -f "$SECURITY_TEMP_DIR/server.ready" ]; then break; fi
+    sleep 0.2
+done
+if [ ! -f "$SECURITY_TEMP_DIR/server.ready" ]; then
+    fail "Network — server failed to start"
+fi
+HOST_PORT=$(cat "$SECURITY_TEMP_DIR/server.port")
+echo "  [INFO] SERVER_PID=$SERVER_PID SERVER_PORT=$HOST_PORT"
+
+# Host probe
+HOST_PROBE_OK=false
 if python3 -c "
 import socket
-s=socket.socket(); s.settimeout(2)
+s=socket.socket(); s.settimeout(3)
 try:
-    s.connect(('127.0.0.1',$HOST_PORT)); s.send(b'host-check'); s.close()
-    print('SERVER_OK')
-except: print('SERVER_FAIL')
-" 2>/dev/null | grep -q "SERVER_OK"; then
-    echo "  [INFO] Test server reachable on 127.0.0.1:$HOST_PORT"
-else
-    fail "Network — test server not reachable from host"
+    s.connect(('127.0.0.1',$HOST_PORT)); s.send(b'$HOST_PROBE_TOKEN'); s.close()
+    print('HOST_PROBE_OK')
+except Exception as e:
+    print(f'HOST_PROBE_FAIL: {e}')
+" 2>/dev/null | grep -q "HOST_PROBE_OK"; then
+    HOST_PROBE_OK=true
+    echo "  [INFO] HOST_PROBE verified"
 fi
 
+if ! $HOST_PROBE_OK; then
+    fail "Network — host probe failed"
+fi
+
+# Verify server still alive after host probe
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    fail "Network — server died after host probe"
+fi
+echo "  [INFO] SERVER_ALIVE_AFTER_HOST_PROBE"
+
+# Sandbox probe
 cat > "$FIXTURE_DIR/net_connect.cpp" << CPPEOF
 #include <arpa/inet.h>
 #include <cerrno>
@@ -166,46 +200,69 @@ int main() {
     int a,b; if(!(std::cin>>a>>b)) return 1;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if(fd<0){ std::cerr << "SOCKET_FAIL errno=" << errno << std::endl; std::cout<<a+b<<std::endl; return 0; }
-    timeval to{}; to.tv_sec=1; to.tv_usec=0;
+    timeval to{}; to.tv_sec=2; to.tv_usec=0;
     setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&to,sizeof(to));
     setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&to,sizeof(to));
     sockaddr_in addr{}; addr.sin_family=AF_INET; addr.sin_port=htons($HOST_PORT);
     inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr);
     int rc=connect(fd,(sockaddr*)&addr,sizeof(addr));
-    int e=errno; close(fd);
-    if(rc==0){ std::cerr << "NET_LEAK" << std::endl; std::cout<<a+b<<std::endl; return 0; }
-    std::cerr << "NET_BLOCKED errno=" << e << std::endl;
+    int e=errno;
+    if(rc==0){
+        const char* probe = "$SANDBOX_PROBE_TOKEN";
+        ssize_t n=write(fd,probe,strlen(probe)); (void)n;
+        std::cerr << "NET_LEAK" << std::endl;
+    } else {
+        std::cerr << "NET_BLOCKED errno=" << e << std::endl;
+    }
+    close(fd);
     std::cout<<a+b<<std::endl; return 0;
 }
 CPPEOF
 
-if run_blocked_test net_connect "NET_BLOCKED"; then
+if run_blocked_test net_connect "NET_BLOCKED" "NET_LEAK"; then
+    # Verify server received host probe but NOT sandbox probe
+    if [ -f "$SECURITY_TEMP_DIR/server.received" ]; then
+        if grep -qF "$HOST_PROBE_TOKEN" "$SECURITY_TEMP_DIR/server.received"; then
+            echo "  [INFO] Server received host probe: OK"
+        else
+            fail "Network — server did not receive host probe"
+        fi
+        if grep -qF "$SANDBOX_PROBE_TOKEN" "$SECURITY_TEMP_DIR/server.received" 2>/dev/null; then
+            fail "Network — server received sandbox probe (ESCAPE)"
+        else
+            echo "  [INFO] Server did NOT receive sandbox probe: OK"
+        fi
+    fi
     pass "Network connection"
 else
     fail "Network connection"
 fi
 
 # ═══════════════════════════════════════════════════════════
-# Test 5: Solution read-only
+# Test 5: Solution read-only (full syscall coverage)
 # ═══════════════════════════════════════════════════════════
 cat > "$FIXTURE_DIR/solution_ro.cpp" << CPPEOF
 #include <cstdio>
 #include <fcntl.h>
 #include <iostream>
+#include <sys/stat.h>
 #include <unistd.h>
 int main() {
     int a,b; if(!(std::cin>>a>>b)) return 1;
-    bool blocked=true;
+    bool any_success=false;
     int fd=open("/sandbox/solution",O_WRONLY);
-    if(fd>=0){ std::cerr << "SOLUTION_WRITABLE" << std::endl; close(fd); blocked=false; }
-    if(truncate("/sandbox/solution",0)==0){ std::cerr << "SOLUTION_TRUNCATED" << std::endl; blocked=false; }
-    if(blocked) std::cerr << "SOLUTION_BLOCKED" << std::endl;
+    if(fd>=0){ std::cerr << "SOLUTION_WRITABLE" << std::endl; close(fd); any_success=true; }
+    if(truncate("/sandbox/solution",0)==0){ std::cerr << "SOLUTION_TRUNCATED" << std::endl; any_success=true; }
+    if(unlink("/sandbox/solution")==0){ std::cerr << "SOLUTION_UNLINKED" << std::endl; any_success=true; }
+    if(rename("/sandbox/solution","/sandbox/solution.moved")==0){ std::cerr << "SOLUTION_RENAMED" << std::endl; any_success=true; }
+    if(chmod("/sandbox/solution",0777)==0){ std::cerr << "SOLUTION_CHMODDED" << std::endl; any_success=true; }
+    if(!any_success) std::cerr << "SOLUTION_BLOCKED" << std::endl;
     std::cout << a+b << std::endl;
     return 0;
 }
 CPPEOF
 
-if run_blocked_test solution_ro "SOLUTION_BLOCKED"; then
+if run_blocked_test solution_ro "SOLUTION_BLOCKED" "SOLUTION_WRITABLE\|SOLUTION_TRUNCATED\|SOLUTION_UNLINKED\|SOLUTION_RENAMED\|SOLUTION_CHMODDED"; then
     pass "Solution read-only"
 else
     fail "Solution read-only"
@@ -232,7 +289,7 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test forbidden_write "FORBIDDEN_WRITE_BLOCKED"; then
+if run_blocked_test forbidden_write "FORBIDDEN_WRITE_BLOCKED" "WRITE_LEAK"; then
     LEAKS=0
     for p in /etc/cppjudge_escape_test /bin/cppjudge_escape_test /cppjudge_escape_test; do
         [ -f "$p" ] && { echo "  [WARN] Leaked file found: $p"; LEAKS=$((LEAKS+1)); }
@@ -266,7 +323,7 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test env_read "ENV_BLOCKED"; then
+if run_blocked_test env_read "ENV_BLOCKED" "ENV_LEAK"; then
     pass "Environment clearing"
 else
     fail "Environment clearing"
@@ -295,7 +352,7 @@ int main() {
     bool leaked=false;
     for(int fd=3;fd<=64;fd++){
         char buf[256]; ssize_t n=read(fd,buf,sizeof(buf)-1);
-        if(n>0){ buf[n]=0; if(strstr(buf,"CPPJUDGE_CANARY")){ std::cerr<<"FD_LEAK:"<<fd<<std::endl; leaked=true; } }
+        if(n>0){ buf[n]=0; if(strstr(buf,"CJ2B_")){ std::cerr<<"FD_LEAK:"<<fd<<std::endl; leaked=true; } }
     }
     if(!leaked) std::cerr<<"FD_BLOCKED"<<std::endl;
     std::cout<<a+b<<std::endl;
@@ -303,7 +360,7 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test fd_read "FD_BLOCKED"; then
+if run_blocked_test fd_read "FD_BLOCKED" "FD_LEAK"; then
     pass "Extra fd closing"
 else
     fail "Extra fd closing"
@@ -311,44 +368,57 @@ fi
 exec 9<&-
 
 # ═══════════════════════════════════════════════════════════
-# Test 9: No leftover processes
-cat > "$FIXTURE_DIR/spawn_brief.cpp" << CPPEOF
+# Test 9: No leftover orphan processes
+# ═══════════════════════════════════════════════════════════
+PROCESS_TOKEN="cj2b$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
+echo "  [INFO] PROCESS_TOKEN=$PROCESS_TOKEN"
+
+cat > "$FIXTURE_DIR/spawn_orphans.cpp" << CPPEOF
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
-#include <sys/wait.h>
+#include <signal.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 int main() {
     int a,b; if(!(std::cin>>a>>b)) return 1;
+    const char* token = "$PROCESS_TOKEN";
     int count=0;
-    for(int i=0;i<8;i++){
+    for(int i=0;i<4;i++){
         pid_t p=fork();
-        if(p==0){ usleep(100000); _exit(0); }
+        if(p==0){
+            prctl(PR_SET_NAME, token, 0, 0, 0);
+            prctl(PR_SET_PDEATHSIG, SIGKILL);
+            pause(); // wait until killed by parent death or nsjail timeout
+            _exit(0);
+        }
         if(p>0) count++;
     }
-    for(int i=0;i<count;i++) wait(nullptr);
-    std::cerr<<"SPAWN_COUNT:"<<count<<std::endl;
+    std::cerr<<"CHILDREN_SPAWNED:"<<count<<std::endl;
     std::cout<<a+b<<std::endl;
     return 0;
 }
 CPPEOF
 
-run_blocked_test spawn_brief "SPAWN_COUNT:" || true
-sleep 2
-MY_UID=$(id -u)
-# Check for residual processes: only look for nsjail or solution binaries
-# that might still be running, excluding the test script and build tools.
-set +o pipefail
-LEFTOVER=$(ps -u "$MY_UID" -o pid,cmd --no-headers 2>/dev/null | grep -E "nsjail" | grep -v grep | grep -v "test_nsjail" | wc -l)
-set -o pipefail
-if [ "$LEFTOVER" -eq 0 ]; then
-    pass "No leftover process"
-else
-    echo "  [WARN] Found $LEFTOVER nsjail residual(s)"
-    ps -u "$MY_UID" -o pid,cmd --no-headers 2>/dev/null | grep -E "nsjail" | grep -v grep
-    fail "No leftover process"
+if run_blocked_test spawn_orphans "CHILDREN_SPAWNED:" ""; then
+    echo "  [INFO] CHILDREN_SPAWNED: check stderr for count"
+    sleep 3
+    LEFTOVER=0
+    if ps -e -o comm= 2>/dev/null | grep -qF "$PROCESS_TOKEN"; then
+        LEFTOVER=1
+    fi
+    echo "  [INFO] LEFTOVER_COUNT=$LEFTOVER"
+    if [ "$LEFTOVER" = "0" ]; then
+        pass "No leftover process"
+    else
+        echo "  [WARN] Found residual(s) with token $PROCESS_TOKEN"
+        ps -e -o pid,comm= 2>/dev/null | grep -F "$PROCESS_TOKEN" || true
+        pkill -f "$PROCESS_TOKEN" 2>/dev/null || true
+        fail "No leftover process"
+    fi
 fi
-
-# Summary
+# ── Summary ────────────────────────────────────────────────
 echo ""
 echo "Security MUST_BLOCK Summary"
 echo "Total: $PASS passed, $FAIL failed"

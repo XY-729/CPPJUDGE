@@ -1,33 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Security test helpers for cppjudge nsjail tests
-# Each test gets its own isolated temp dir, build dir, canary, and PID tracking.
+# ── Self-check diagnostics ────────────────────────────────
+CPPJUDGE_BIN="$(realpath "${CPPJUDGE_BIN:-./build/cppjudge}")"
+echo "CPPJUDGE_BIN=$CPPJUDGE_BIN"
 
-CPPJUDGE_BIN="${CPPJUDGE_BIN:-./build/cppjudge}"
-
-# Validate prerequisites
 if [ ! -x "$CPPJUDGE_BIN" ]; then
     echo "ERROR: CPPJUDGE_BIN not executable: $CPPJUDGE_BIN"
     exit 1
 fi
-if ! command -v nsjail >/dev/null 2>&1; then
+
+NSJAIL="$(command -v nsjail 2>/dev/null || true)"
+if [ -z "$NSJAIL" ]; then
     echo "SKIP: nsjail not found in PATH"
-    exit 0
+    exit 77
 fi
+echo "NSJAIL=$NSJAIL"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # ── Unique temp directory ─────────────────────────────────
-SECURITY_TEMP_DIR=$(mktemp -d -t cppjudge-security.XXXXXX)
+export SECURITY_TEMP_DIR=$(mktemp -d -t cppjudge-security.XXXXXX)
 export CPPJUDGE_BUILD_DIR="$SECURITY_TEMP_DIR/judge-build"
+echo "SECURITY_TEMP_DIR=$SECURITY_TEMP_DIR"
+echo "CPPJUDGE_BUILD_DIR=$CPPJUDGE_BUILD_DIR"
 
 # ── Random canary ─────────────────────────────────────────
-CANARY_VALUE="CPPJUDGE_CANARY_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+CANARY_VALUE="CJ2B_$(python3 -c 'import secrets; print(secrets.token_hex(12))')"
 HOST_CANARY="$SECURITY_TEMP_DIR/host-secret.txt"
 printf '%s\n' "$CANARY_VALUE" > "$HOST_CANARY"
 
 # ── Background PID tracking ───────────────────────────────
 BACKGROUND_PIDS=()
-
 track_pid() { BACKGROUND_PIDS+=("$1"); }
 
 cleanup() {
@@ -44,36 +48,43 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
-# ── Helpers ───────────────────────────────────────────────
+# ── Counters ──────────────────────────────────────────────
 PASS=0; FAIL=0
 fail() { printf '  [FAIL] %s\n' "$1"; FAIL=$((FAIL+1)); }
 pass() { printf '  [PASS] %s\n' "$1"; PASS=$((PASS+1)); }
 
-# Run judge with nsjail sandbox, return final_verdict
+# ── Judge helpers ─────────────────────────────────────────
+JUDGE_LOG="$CPPJUDGE_BUILD_DIR/judge_log.json"
+
 run_nsjail_judge() {
     local problem_dir="$1" submission="$2"
-    rm -f "$CPPJUDGE_BUILD_DIR/judge_log.json"
+    rm -f "$JUDGE_LOG"
     "$CPPJUDGE_BIN" "$submission" "$problem_dir" 1000 128 1 floating 5000 >/dev/null 2>&1 || true
-    if [ ! -f "$CPPJUDGE_BUILD_DIR/judge_log.json" ]; then
-        echo "ERROR: judge did not produce judge_log.json"
+    if [ ! -f "$JUDGE_LOG" ]; then
+        echo "ERROR: judge did not produce $JUDGE_LOG"
         return 1
     fi
-    python3 -c "import json; json.load(open('$CPPJUDGE_BUILD_DIR/judge_log.json'))" 2>/dev/null || {
-        echo "ERROR: invalid judge_log.json"
+    if ! python3 -c "import json; json.load(open('$JUDGE_LOG'))" 2>/dev/null; then
+        echo "ERROR: invalid JSON in $JUDGE_LOG"
         return 1
-    }
+    fi
+    return 0
 }
 
 judge_log_field() {
-    python3 -c "import json; print(json.load(open('$CPPJUDGE_BUILD_DIR/judge_log.json')).get('$1',''))" 2>/dev/null
+    python3 -c "import json; print(json.load(open('$JUDGE_LOG')).get('$1',''))" 2>/dev/null
 }
 
-# Create nsjail problem from A+B template
+user_output_dir() { judge_log_field "user_output_dir"; }
+
+# ── nsjail problem inside SECURITY_TEMP_DIR ───────────────
 make_nsjail_problem() {
     local dir
-    dir=$(mktemp -d -t cppjudge_nsproblem.XXXXXX)
-    cp -a problems/A+B/* "$dir/"
+    mkdir -p "$SECURITY_TEMP_DIR/problems"
+    dir=$(mktemp -d "$SECURITY_TEMP_DIR/problems/nsproblem.XXXXXX")
+    cp -a "$ROOT_DIR/problems/A+B/." "$dir/"
     python3 -c "
 import json
 from pathlib import Path
@@ -85,10 +96,48 @@ with p.open('w') as f: json.dump(data, f, indent=4); f.write('\n')
     echo "$dir"
 }
 
-# Get the user_output dir from the last run
-user_output_dir() {
-    judge_log_field "user_output_dir"
-}
+# ── Enhanced blocked test: verifies final_verdict + required/forbidden markers ─
+run_blocked_test() {
+    local name="$1" required_marker="$2" forbidden_marker="$3"
+    local sub="$FIXTURE_DIR/sub_${name}.cpp"
+    cp "$FIXTURE_DIR/${name}.cpp" "$sub"
 
-# Check if a string appears in a file
-file_contains() { grep -qF "$1" "$2" 2>/dev/null; }
+    if ! run_nsjail_judge "$NS_PROBLEM" "$sub"; then
+        echo "  [DEBUG] $name: infrastructure failure (no valid judge log)"
+        return 1
+    fi
+
+    local verdict
+    verdict=$(judge_log_field "final_verdict")
+    if [ "$verdict" != "Accepted" ]; then
+        echo "  [DEBUG] $name: final_verdict=$verdict (expected Accepted)"
+        local err_msg
+        err_msg=$(judge_log_field "error")
+        echo "  [DEBUG] $name: error=$err_msg"
+        return 1
+    fi
+
+    local uo_dir err_file
+    uo_dir=$(user_output_dir)
+    err_file="$uo_dir/1.out.err"
+
+    if [ ! -f "$err_file" ]; then
+        echo "  [DEBUG] $name: stderr file not found: $err_file"
+        return 1
+    fi
+
+    if [ -n "$forbidden_marker" ] && grep -qF "$forbidden_marker" "$err_file" 2>/dev/null; then
+        echo "  [DEBUG] $name: FORBIDDEN marker found: $forbidden_marker"
+        cat "$err_file" | head -5
+        return 1
+    fi
+
+    if grep -qF "$required_marker" "$err_file" 2>/dev/null; then
+        return 0
+    fi
+
+    echo "  [DEBUG] $name: required marker NOT found: $required_marker"
+    echo "  [DEBUG] stderr (first 5 lines):"
+    head -5 "$err_file" 2>/dev/null || echo "  (empty)"
+    return 1
+}

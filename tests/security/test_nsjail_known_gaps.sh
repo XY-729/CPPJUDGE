@@ -12,19 +12,44 @@ NS_PROBLEM=$(make_nsjail_problem)
 echo "Security KNOWN_GAP Report"
 echo "========================="
 
+INFRA_FAIL=0
+
+# Helper: run fixture and require valid infrastructure; gap behavior is observed, not judged
 run_gap_fixture() {
     local name="$1"
     local sub="$FIXTURE_DIR/sub_${name}.cpp"
     cp "$FIXTURE_DIR/${name}.cpp" "$sub"
-    run_nsjail_judge "$NS_PROBLEM" "$sub" || true
+
+    if ! run_nsjail_judge "$NS_PROBLEM" "$sub"; then
+        echo "  INFRASTRUCTURE FAILURE: $name — no valid judge log"
+        INFRA_FAIL=$((INFRA_FAIL + 1))
+        return 1
+    fi
+
+    local verdict
+    verdict=$(judge_log_field "final_verdict")
+    if [ -z "$verdict" ]; then
+        echo "  INFRASTRUCTURE FAILURE: $name — missing final_verdict"
+        INFRA_FAIL=$((INFRA_FAIL + 1))
+        return 1
+    fi
+
+    echo "  $name verdict: $verdict"
+
     local uo_dir err_file
     uo_dir=$(user_output_dir)
     err_file="$uo_dir/1.out.err"
-    if [ -f "$err_file" ]; then cat "$err_file"; fi
+    if [ -f "$err_file" ]; then
+        echo "  $name stderr:"
+        cat "$err_file" | while IFS= read -r line; do echo "    $line"; done
+    else
+        echo "  $name stderr: (not found)"
+    fi
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════
-# GAP 1: AF_INET socket creation
+# GAP 1: Socket creation
 # ═══════════════════════════════════════════════════════════
 cat > "$FIXTURE_DIR/gap_socket.cpp" << CPPEOF
 #include <cstdio>
@@ -32,6 +57,7 @@ cat > "$FIXTURE_DIR/gap_socket.cpp" << CPPEOF
 #include <cstring>
 #include <iostream>
 #include <sys/socket.h>
+#include <unistd.h>
 int main() {
     int a,b; if(!(std::cin>>a>>b)) return 1;
     int fd=socket(AF_INET,SOCK_STREAM,0);
@@ -49,10 +75,10 @@ int main() {
 CPPEOF
 
 echo "--- Socket creation ---"
-run_gap_fixture gap_socket
+run_gap_fixture gap_socket || true
 
 # ═══════════════════════════════════════════════════════════
-# GAP 2: Process creation
+# GAP 2: Process creation limit
 # ═══════════════════════════════════════════════════════════
 cat > "$FIXTURE_DIR/gap_processes.cpp" << CPPEOF
 #include <cstdio>
@@ -75,7 +101,7 @@ int main() {
 CPPEOF
 
 echo "--- Process creation ---"
-run_gap_fixture gap_processes
+run_gap_fixture gap_processes || true
 
 # ═══════════════════════════════════════════════════════════
 # GAP 3: Thread creation
@@ -102,7 +128,7 @@ int main() {
 CPPEOF
 
 echo "--- Thread creation ---"
-run_gap_fixture gap_threads
+run_gap_fixture gap_threads || true
 
 # ═══════════════════════════════════════════════════════════
 # GAP 4: /bin/sh execution
@@ -113,6 +139,7 @@ cat > "$FIXTURE_DIR/gap_shell.cpp" << CPPEOF
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sys/wait.h>
 #include <unistd.h>
 int main() {
     int a,b; if(!(std::cin>>a>>b)) return 1;
@@ -128,12 +155,16 @@ int main() {
 CPPEOF
 
 echo "--- Shell execution ---"
-run_gap_fixture gap_shell
+run_gap_fixture gap_shell || true
 
 # ── Summary ────────────────────────────────────────────────
 echo ""
 echo "Security KNOWN_GAP Report"
-echo "See individual fixture stderr output above for actual behavior."
-echo "GAPS are expected; do not treat as security failures."
-rm -rf "$NS_PROBLEM"
+if [ "$INFRA_FAIL" -gt 0 ]; then
+    echo "INFRASTRUCTURE FAILURES: $INFRA_FAIL"
+    echo "RESULT: INFRASTRUCTURE_FAILURE"
+    exit 1
+fi
+echo "All gap fixtures executed; gap behaviors recorded above."
+echo "GAPS are expected limitations — do not treat as security failures."
 exit 0

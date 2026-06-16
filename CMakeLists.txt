@@ -121,6 +121,7 @@ if(NSJAIL_EXECUTABLE)
         LABELS "security;security-must-block;nsjail"
         TIMEOUT 300
         RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
     )
 
     add_test(
@@ -133,5 +134,6 @@ if(NSJAIL_EXECUTABLE)
         LABELS "security;security-known-gap;nsjail"
         TIMEOUT 300
         RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
     )
 endif()
