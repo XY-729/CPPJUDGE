@@ -96,48 +96,55 @@ with p.open('w') as f: json.dump(data, f, indent=4); f.write('\n')
     echo "$dir"
 }
 
-# ── Enhanced blocked test: verifies final_verdict + required/forbidden markers ─
+# ── Enhanced blocked test: verifies final_verdict + required marker + forbidden markers ─
 run_blocked_test() {
-    local name="$1" required_marker="$2" forbidden_marker="$3"
+    local name="$1"
+    local required_marker="$2"
+    shift 2
+
+    local forbidden_markers=("$@")
     local sub="$FIXTURE_DIR/sub_${name}.cpp"
+
     cp "$FIXTURE_DIR/${name}.cpp" "$sub"
 
     if ! run_nsjail_judge "$NS_PROBLEM" "$sub"; then
-        echo "  [DEBUG] $name: infrastructure failure (no valid judge log)"
+        echo "  [DEBUG] $name: infrastructure failure"
         return 1
     fi
 
     local verdict
-    verdict=$(judge_log_field "final_verdict")
-    if [ "$verdict" != "Accepted" ]; then
-        echo "  [DEBUG] $name: final_verdict=$verdict (expected Accepted)"
-        local err_msg
-        err_msg=$(judge_log_field "error")
-        echo "  [DEBUG] $name: error=$err_msg"
+    verdict="$(judge_log_field final_verdict)"
+
+    if [[ "$verdict" != "Accepted" ]]; then
+        echo "  [DEBUG] $name: expected Accepted, got $verdict"
         return 1
     fi
 
     local uo_dir err_file
-    uo_dir=$(user_output_dir)
+    uo_dir="$(user_output_dir)"
     err_file="$uo_dir/1.out.err"
 
-    if [ ! -f "$err_file" ]; then
-        echo "  [DEBUG] $name: stderr file not found: $err_file"
+    if [[ ! -f "$err_file" ]]; then
+        echo "  [DEBUG] $name: missing stderr file: $err_file"
         return 1
     fi
 
-    if [ -n "$forbidden_marker" ] && grep -qF "$forbidden_marker" "$err_file" 2>/dev/null; then
-        echo "  [DEBUG] $name: FORBIDDEN marker found: $forbidden_marker"
-        cat "$err_file" | head -5
+    if ! grep -qF -- "$required_marker" "$err_file"; then
+        echo "  [DEBUG] $name: missing required marker: $required_marker"
+        head -20 "$err_file" || true
         return 1
     fi
 
-    if grep -qF "$required_marker" "$err_file" 2>/dev/null; then
-        return 0
-    fi
+    local marker
+    for marker in "${forbidden_markers[@]}"; do
+        [[ -z "$marker" ]] && continue
 
-    echo "  [DEBUG] $name: required marker NOT found: $required_marker"
-    echo "  [DEBUG] stderr (first 5 lines):"
-    head -5 "$err_file" 2>/dev/null || echo "  (empty)"
-    return 1
+        if grep -qF -- "$marker" "$err_file"; then
+            echo "  [DEBUG] $name: forbidden marker found: $marker"
+            head -20 "$err_file" || true
+            return 1
+        fi
+    done
+
+    return 0
 }

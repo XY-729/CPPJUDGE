@@ -63,7 +63,7 @@ int main() {
 CPPEOF
 
 CANARY_BEFORE=$(cat "$HOST_CANARY")
-if run_blocked_test host_canary_write "WRITE_ATTEMPTED" ""; then
+if run_blocked_test host_canary_write "WRITE_ATTEMPTED"; then
     CANARY_AFTER=$(cat "$HOST_CANARY")
     if [ "$CANARY_BEFORE" = "$CANARY_AFTER" ]; then
         pass "Host canary write"
@@ -262,7 +262,12 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test solution_ro "SOLUTION_BLOCKED" "SOLUTION_WRITABLE\|SOLUTION_TRUNCATED\|SOLUTION_UNLINKED\|SOLUTION_RENAMED\|SOLUTION_CHMODDED"; then
+if run_blocked_test solution_ro "SOLUTION_BLOCKED" \
+    "SOLUTION_WRITABLE" \
+    "SOLUTION_TRUNCATED" \
+    "SOLUTION_UNLINKED" \
+    "SOLUTION_RENAMED" \
+    "SOLUTION_CHMODDED"; then
     pass "Solution read-only"
 else
     fail "Solution read-only"
@@ -370,15 +375,70 @@ exec 9<&-
 # ═══════════════════════════════════════════════════════════
 # Test 9: No leftover orphan processes
 # ═══════════════════════════════════════════════════════════
-PROCESS_TOKEN="cj2b$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
-echo "  [INFO] PROCESS_TOKEN=$PROCESS_TOKEN"
+PROCESS_TOKEN="cj$(python3 -c 'import secrets; print(secrets.token_hex(5))')"
+echo "  [INFO] PROCESS_TOKEN=$PROCESS_TOKEN (len=${#PROCESS_TOKEN})"
 
+if [[ ${#PROCESS_TOKEN} -gt 15 ]]; then
+    echo "ERROR: process token too long"
+    exit 1
+fi
+
+# ── Host sanity check: prove fixture creates orphans without PDEATHSIG ──
+HOST_SANITY_TOKEN="hs$(python3 -c 'import secrets; print(secrets.token_hex(5))')"
+echo "  [INFO] HOST_SANITY_TOKEN=$HOST_SANITY_TOKEN"
+
+cat > "$FIXTURE_DIR/spawn_orphans_host_sanity.cpp" << CPPEOF
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <sys/prctl.h>
+#include <unistd.h>
+int main() {
+    const char* token = "$HOST_SANITY_TOKEN";
+    int count=0;
+    for(int i=0;i<4;i++){
+        pid_t p=fork();
+        if(p==0){
+            prctl(PR_SET_NAME, token, 0, 0, 0);
+            for(;;){ sleep(1); }
+        }
+        if(p>0) count++;
+    }
+    std::cout << "HOST_SANITY_SPAWNED:" << count << std::endl;
+    return 0;
+}
+CPPEOF
+
+g++ -o "$SECURITY_TEMP_DIR/sanity_orphan" "$FIXTURE_DIR/spawn_orphans_host_sanity.cpp"
+"$SECURITY_TEMP_DIR/sanity_orphan" &
+SANITY_PID=$!
+wait "$SANITY_PID" 2>/dev/null || true
+
+sleep 0.5
+HOST_SANITY_LEFTOVER_BEFORE=$(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null | wc -l || true)
+echo "  [INFO] HOST_SANITY_LEFTOVER_BEFORE_CLEANUP=$HOST_SANITY_LEFTOVER_BEFORE"
+
+if [[ "$HOST_SANITY_LEFTOVER_BEFORE" -eq 0 ]]; then
+    echo "  [WARN] Host sanity check: no orphans created, fixture may be self-cleaning"
+fi
+
+# Clean up sanity orphans
+while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    kill -KILL "$pid" 2>/dev/null || true
+done < <(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null || true)
+
+sleep 0.3
+HOST_SANITY_LEFTOVER_AFTER=$(pgrep -x "$HOST_SANITY_TOKEN" 2>/dev/null | wc -l || true)
+echo "  [INFO] HOST_SANITY_LEFTOVER_AFTER_CLEANUP=$HOST_SANITY_LEFTOVER_AFTER"
+
+# ── Actual nsjail orphan test ──
 cat > "$FIXTURE_DIR/spawn_orphans.cpp" << CPPEOF
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <signal.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 int main() {
@@ -389,9 +449,7 @@ int main() {
         pid_t p=fork();
         if(p==0){
             prctl(PR_SET_NAME, token, 0, 0, 0);
-            prctl(PR_SET_PDEATHSIG, SIGKILL);
-            pause(); // wait until killed by parent death or nsjail timeout
-            _exit(0);
+            for(;;){ sleep(1); }
         }
         if(p>0) count++;
     }
@@ -401,23 +459,38 @@ int main() {
 }
 CPPEOF
 
-if run_blocked_test spawn_orphans "CHILDREN_SPAWNED:" ""; then
+if run_blocked_test spawn_orphans "CHILDREN_SPAWNED:"; then
     echo "  [INFO] CHILDREN_SPAWNED: check stderr for count"
-    sleep 3
+
+    # Poll for up to 3 seconds
     LEFTOVER=0
-    if ps -e -o comm= 2>/dev/null | grep -qF "$PROCESS_TOKEN"; then
-        LEFTOVER=1
-    fi
+    for _ in $(seq 1 30); do
+        LEFTOVER="$(pgrep -x "$PROCESS_TOKEN" 2>/dev/null | wc -l || true)"
+        if [[ "$LEFTOVER" -eq 0 ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+
     echo "  [INFO] LEFTOVER_COUNT=$LEFTOVER"
-    if [ "$LEFTOVER" = "0" ]; then
+    if [[ "$LEFTOVER" -eq 0 ]]; then
         pass "No leftover process"
     else
         echo "  [WARN] Found residual(s) with token $PROCESS_TOKEN"
-        ps -e -o pid,comm= 2>/dev/null | grep -F "$PROCESS_TOKEN" || true
-        pkill -f "$PROCESS_TOKEN" 2>/dev/null || true
+        ps -e -o pid=,ppid=,comm=,args= | awk -v token="$PROCESS_TOKEN" '$3 == token'
+
+        # Precise cleanup: only kill exact token match
+        mapfile -t leaked_pids < <(pgrep -x "$PROCESS_TOKEN" 2>/dev/null || true)
+        for pid in "${leaked_pids[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+        done
+
         fail "No leftover process"
     fi
+else
+    fail "No leftover process"
 fi
+
 # ── Summary ────────────────────────────────────────────────
 echo ""
 echo "Security MUST_BLOCK Summary"
