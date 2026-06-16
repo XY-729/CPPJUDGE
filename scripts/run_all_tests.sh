@@ -149,8 +149,21 @@ fi
 
 # ── Guard: track repo test data ────────────────────────────
 echo "=== Checking repo test data integrity ==="
-git diff -- problems submissions
-echo "  test data unchanged before run"
+if git diff --quiet -- problems submissions; then
+    echo "  test data unchanged before run"
+else
+    echo "ERROR: tracked test data already differs before test run" >&2
+    git diff -- problems submissions
+    exit 1
+fi
+
+if git diff --cached --quiet -- problems submissions; then
+    :
+else
+    echo "ERROR: staged test data already differs before test run" >&2
+    git diff --cached -- problems submissions
+    exit 1
+fi
 echo ""
 
 # ── Run tests ──────────────────────────────────────────────
