@@ -75,7 +75,7 @@ problems/A+B/                    # 默认示例题
 submissions/tests/               # 测试用例 (ac/wa/tle/mle/ole/re/ce)
 submissions/tests/security/      # 安全测试用例
 scripts/                         # 测试和环境诊断脚本
-docs/nsjail-plan.md              # nsjail 加固计划
+docs/                           # 项目文档 (WORKSPACE, TESTING, nsjail-plan, security-test-matrix)
 ```
 
 ## 评测调用链

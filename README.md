@@ -308,6 +308,13 @@ bash scripts/run_tests.sh
 
 ---
 
+## 文档
+
+- [工作区策略](docs/WORKSPACE.md)
+- [测试约定](docs/TESTING.md)
+- [nsjail 加固计划](docs/nsjail-plan.md)
+- [nsjail 安全测试矩阵](docs/security-test-matrix.md)
+
 ## 作者
 
 XY-729
