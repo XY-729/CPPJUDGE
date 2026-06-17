@@ -1,0 +1,30 @@
+[Unit]
+Description=CPPJUDGE Judge Service
+Documentation=https://github.com/XY-729/CPPJUDGE
+After=network.target
+
+[Service]
+Type=simple
+User=<judge-user>
+Group=<judge-group>
+ExecStart=/usr/local/bin/cppjudge <submission> <problem_dir> <time_ms> <mem_mb> <out_mb> <compare> <compile_time_ms>
+WorkingDirectory=/home/<judge-user>/cppjudge
+
+# ── Required for cgroup v2 resource control ───────────────
+# CPPJUDGE stage3b+ nsjail production mode requires delegated
+# memory and pids controllers.  Without these, every run will
+# return System Error (SE).
+Delegate=memory pids
+
+# ── Basic hardening (do NOT add options that conflict with
+# nsjail's own namespace creation, e.g. PrivateUsers, etc.) ─
+NoNewPrivileges=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=no
+
+# ── Restart policy ────────────────────────────────────────
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
