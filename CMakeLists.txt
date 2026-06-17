@@ -11,6 +11,7 @@ add_library(cppjudge_lib STATIC
     src/compiler.cpp
     src/runner.cpp
     src/comparer.cpp
+    src/cgroup_v2.cpp
 )
 
 target_include_directories(cppjudge_lib PUBLIC
@@ -52,6 +53,7 @@ add_cppjudge_unit_test(test_comparer tests/unit/test_comparer.cpp)
 add_cppjudge_unit_test(test_sandbox_types tests/unit/test_sandbox_types.cpp)
 add_cppjudge_unit_test(test_verdict_strings tests/unit/test_verdict_strings.cpp)
 add_cppjudge_unit_test(test_config tests/unit/test_config.cpp)
+add_cppjudge_unit_test(test_cgroup_v2 tests/unit/test_cgroup_v2.cpp)
 
 # ── Integration tests ─────────────────────────────────────
 function(add_cppjudge_integration_test test_name test_script)
@@ -153,6 +155,21 @@ set_tests_properties(test_regression_mle_classification PROPERTIES
     TIMEOUT 120
     RUN_SERIAL TRUE
 )
+
+# ── Cgroup v2 delegated integration tests ─────────────────
+add_test(
+    NAME test_cgroup_delegated_verdicts
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_cgroup_delegated_verdicts.sh
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(test_cgroup_delegated_verdicts PROPERTIES
+    ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+    LABELS "integration;cgroup-delegated"
+    TIMEOUT 120
+    RUN_SERIAL TRUE
+    SKIP_RETURN_CODE 77
+)
+
 # ── Security tests (nsjail required) ──────────────────────
 if(NSJAIL_EXECUTABLE)
     add_test(
