@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+开始任何任务前必须读取并遵守 .claude/EXECUTION_PROTOCOL.md；一旦触发停止条件，必须立即输出中文 BLOCKED 报告并停止。
+
 CPPJUDGE 是一个轻量级 C++ 判题内核，目标演变成适合学校或实验室可信环境使用的判题后端。
 
 ## 远程开发环境

@@ -8,8 +8,12 @@ cd "$ROOT_DIR"
 
 if ! command -v nsjail >/dev/null 2>&1; then
     echo "nsjail not found, skipping nsjail integration tests"
-    exit 0
+    exit 77
 fi
+
+# Stage 3B: nsjail production mode requires delegated cgroup v2
+source "$ROOT_DIR/tests/support/skip_unless_cgroup_delegated.sh"
+skip_unless_cgroup_delegated
 
 source tests/support/test_helpers.sh
 

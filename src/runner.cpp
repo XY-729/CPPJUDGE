@@ -330,7 +330,7 @@ SandboxRunConfig make_sandbox_run_config(
 std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
     std::vector<std::string> args = {
         "nsjail",
-        "-Mo",
+        "-Me",
         "--chroot",
         absolute_path_for_nsjail(config.sandbox_root_dir),
         "--cwd",
@@ -1106,7 +1106,6 @@ static RunInfo run_program_nsjail(
     }
 
     // Classify verdict using cgroup events + termination cause
-    // Default prior to classification
     info.result = RunResult::OK;
     classify_verdict(info, status, events_delta, cause);
 

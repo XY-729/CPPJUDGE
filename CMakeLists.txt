@@ -79,6 +79,7 @@ if(NSJAIL_EXECUTABLE)
         LABELS "integration;nsjail"
         TIMEOUT 120
         RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
     )
 endif()
 
@@ -109,6 +110,7 @@ if(NSJAIL_EXECUTABLE)
     add_cppjudge_regression_test(test_regression_nsjail scripts/run_nsjail_tests.sh)
     set_tests_properties(test_regression_nsjail PROPERTIES
         LABELS "regression;nsjail"
+        SKIP_RETURN_CODE 77
     )
 endif()
 

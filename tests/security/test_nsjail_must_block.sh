@@ -3,6 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+if ! command -v nsjail >/dev/null 2>&1; then
+    echo "SKIP: nsjail is not installed"
+    exit 77
+fi
+
+# Stage 3B: nsjail production mode requires delegated cgroup v2.
+source "$ROOT_DIR/tests/support/skip_unless_cgroup_delegated.sh"
+skip_unless_cgroup_delegated
+
 source tests/support/security_test_helpers.sh
 
 FIXTURE_DIR="$SECURITY_TEMP_DIR/fixtures"
