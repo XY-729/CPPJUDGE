@@ -57,7 +57,7 @@ main.cpp
 
 ### runner（`src/runner.h` / `src/runner.cpp`）
 
-负责进程启动、沙箱执行、资源限制和退出状态收集。支持三种沙箱后端：
+负责进程启动、沙箱执行、资源限制和退出状态收集。当前有两种可用后端和一种占位接口：
 
 - **builtin**: 通过 `fork` + `execl` 执行用户程序。父进程使用 `wait4(WNOHANG)` 轮询，每 5ms 检查 `/proc/<pid>/status` 的 `VmSize` 监控内存、检查墙钟超时、检查输出文件大小。使用 `RLIMIT_AS`、`RLIMIT_FSIZE`、`RLIMIT_CORE`、`RLIMIT_NOFILE`、`RLIMIT_NPROC`、`RLIMIT_CPU` 做资源限制。子进程通过 `setpgid(0,0)` 创建独立进程组，超限时使用 `kill(-pid, SIGKILL)` 清理整个进程组。同样使用 `pipe2(O_CLOEXEC)` 检测 `exec` 失败。
 - **nsjail**: 构建 per-run sandbox_root、bind-mount 只读挂载 solution 和动态库、读写挂载 user_output 目录。通过 `nsjail -Mo --chroot` 执行，禁用 procfs（`--disable_proc`），施加 rlimit。当前仍通过解析 nsjail stderr 辅助判断 TLE/MLE/OLE（已知限制）。
@@ -156,7 +156,16 @@ struct RunInfo {
 - 错误由最接近错误来源的底层模块进行结构化分类。
 - `pipe2(O_CLOEXEC)` 是 exec 失败检测的核心机制：子进程 exec 成功后写端自动关闭，父进程读到数据即表示 exec 失败。
 
-**已知限制**: nsjail runner 当前仍通过解析 stderr 辅助判断 TLE/MLE/OLE（`stderr_says_tle`、`stderr_says_mle`、`stderr_says_ole`）。builtin runner 也通过检查 stderr 中的 `bad_alloc` 辅助判断 MLE。这些是后续 cgroup v2 集成前需要解决的过渡方案。
+**已知限制**: nsjail runner 当前通过解析 stderr 内容直接设置 TLE、MLE、OLE verdict：
+`stderr_says_tle`（匹配 `time limit` / `timed out`）、
+`stderr_says_mle`（匹配 `memory` / `oom` / `bad_alloc`）、
+`stderr_says_ole`（匹配 `File size limit exceeded`）
+（`src/runner.cpp:938-965`）。
+builtin runner 通过检查 error_file 中的 `bad_alloc`、
+`Cannot allocate memory` 等关键词辅助判断 MLE
+（`src/runner.cpp:680-682`）。
+这些文本匹配判断在后续 cgroup v2 集成后应由可信内核状态
+（`memory.events` OOM 计数、进程信号）替代。
 
 ---
 

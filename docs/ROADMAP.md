@@ -21,7 +21,7 @@ CPPJUDGE 的长期目标是成为一个适合学校或实验室可信环境使�
 
 ## 3. 阶段 1：错误模型和判定可靠性
 
-**Status: Completed**
+**Status: In Progress**
 
 核心目标：runner 不再把沙箱故障伪装成 RE，judge 不再读取 stderr 并通过字符串猜测 SE，编译和运行返回结构化结果。
 
@@ -41,6 +41,18 @@ CPPJUDGE 的长期目标是成为一个适合学校或实验室可信环境使�
 
 - 所有错误都有明确来源。
 - judge.cpp 不再通过猜字符串区分用户错误和系统错误。
+
+
+### 尚未完成
+
+- nsjail runner 仍通过解析 stderr 判断 TLE、MLE、OLE：
+  `stderr_says_tle` / `stderr_says_mle` / `stderr_says_ole` 直接设置 verdict
+  （`src/runner.cpp:938-965`）。
+- builtin runner 仍通过检查 error_file 中的 `bad_alloc`、
+  `Cannot allocate memory` 等关键词辅助判断 MLE
+  （`src/runner.cpp:680-682`）。
+- 目标：使用可信内核状态（cgroup `memory.events`、进程信号）替代
+  文本匹配，在阶段 3 的 cgroup v2 集成中解决。
 
 **关键 commit**: `ecc46d1`, `43884a7`
 
