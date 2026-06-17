@@ -1,4 +1,5 @@
 #include "runner.h"
+#include "cgroup_v2.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,6 +30,29 @@ namespace {
 static constexpr SandboxType DEFAULT_SANDBOX_TYPE = SandboxType::BUILTIN;
 static constexpr int BUILTIN_NOFILE_LIMIT = 64;
 static constexpr int BUILTIN_NPROC_LIMIT = 16;
+static constexpr int NSJAIL_AS_HEADROOM_MB = 64;
+static constexpr int NSJAIL_PIDS_HEADROOM = 8; // nsjail supervisor + user processes
+static constexpr int CGROUP_KILL_TIMEOUT_SEC = 5;
+
+// ── Cgroup manager (lazy-initialized, once per process) ────
+
+static CgroupV2Manager g_cgroup_mgr;
+static bool g_cgroup_attempted = false;
+static bool g_cgroup_ready = false;
+static std::string g_cgroup_init_error;
+
+static bool ensure_cgroup_ready() {
+    if (g_cgroup_attempted) return g_cgroup_ready;
+    g_cgroup_attempted = true;
+
+    CgroupV2Error error;
+    if (!g_cgroup_mgr.init_service(error)) {
+        g_cgroup_init_error = cgroup_v2_error_message(error, "service_init");
+        return false;
+    }
+    g_cgroup_ready = true;
+    return true;
+}
 
 struct SandboxRunConfig {
     std::string executable_file;
@@ -170,8 +194,19 @@ int nsjail_time_limit_seconds(int time_limit_ms) {
 }
 
 int nsjail_address_space_limit_mb(int memory_limit_mb) {
-    static constexpr int NSJAIL_AS_HEADROOM_MB = 64;
     return memory_limit_mb + NSJAIL_AS_HEADROOM_MB;
+}
+
+// cgroup memory.max = user limit + infrastructure headroom
+std::uint64_t cgroup_memory_max_bytes(int memory_limit_mb) {
+    std::uint64_t user_bytes = static_cast<std::uint64_t>(memory_limit_mb) * 1024ULL * 1024ULL;
+    std::uint64_t headroom_bytes = static_cast<std::uint64_t>(NSJAIL_AS_HEADROOM_MB) * 1024ULL * 1024ULL;
+    return user_bytes + headroom_bytes;
+}
+
+// cgroup pids.max = user process limit + nsjail infrastructure headroom
+std::uint64_t cgroup_pids_max() {
+    return static_cast<std::uint64_t>(BUILTIN_NPROC_LIMIT) + static_cast<std::uint64_t>(NSJAIL_PIDS_HEADROOM);
 }
 
 std::string absolute_path_for_nsjail(const std::string& path) {
@@ -303,8 +338,6 @@ std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
         "--disable_proc",
         "--time_limit",
         std::to_string(nsjail_time_limit_seconds(config.time_limit_ms)),
-        "--rlimit_as",
-        std::to_string(nsjail_address_space_limit_mb(config.memory_limit_mb)),
         "--rlimit_fsize",
         std::to_string(config.output_limit_mb),
         "--rlimit_core",
@@ -361,20 +394,6 @@ std::string join_args_for_log(const std::vector<std::string>& args) {
     return oss.str();
 }
 
-std::string read_file_to_string(const std::string& file_path) {
-    std::ifstream file(file_path);
-    if (!file.is_open()) {
-        return "";
-    }
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
-bool text_contains_case_insensitive(const std::string& text, const std::string& keyword) {
-    return to_lower(text).find(to_lower(keyword)) != std::string::npos;
-}
-
 bool output_file_reached_limit(const std::string& output_file, int output_limit_mb) {
     if (output_limit_mb <= 0) {
         return false;
@@ -407,6 +426,73 @@ static RunInfo make_system_error(const std::string& message) {
     info.exit_code = -1;
     info.signal = -1;
     return info;
+}
+
+// ── Verdict classification (Stage 3B) ──────────────────────
+
+// Classify the final verdict from process status + cgroup events + termination cause.
+// Priority order:
+//   1. SE (infrastructure / cgroup error)
+//   2. TLE (parent WallClockTimeout)
+//   3. OLE (parent OutputLimit)
+//   4. MLE (oom_kill delta >= 1)
+//   5. OLE (SIGXFSZ)
+//   6. TLE (SIGXCPU)
+//   7. OK (exit 0)
+//   8. RE (exit non-0)
+//   9. RE (signalled, not otherwise classified)
+static void classify_verdict(RunInfo& info,
+                              int status,
+                              const CgroupV2EventSnapshot& events_delta,
+                              TerminationCause cause) {
+    // 1. Infrastructure error (already set by caller)
+    if (info.result == RunResult::SE) return;
+
+    // 2. Parent-initiated wall clock timeout → TLE
+    if (cause == TerminationCause::WallClockTimeout) {
+        info.result = RunResult::TLE;
+        return;
+    }
+
+    // 3. Parent-initiated output limit → OLE
+    if (cause == TerminationCause::OutputLimit) {
+        info.result = RunResult::OLE;
+        return;
+    }
+
+    // 4. Real OOM detected by cgroup → MLE
+    if (events_delta.oom_kill >= 1) {
+        info.result = RunResult::MLE;
+        return;
+    }
+
+    // 5-9. Process exit / signal classification
+    if (WIFEXITED(status)) {
+        int exit_code = WEXITSTATUS(status);
+        info.exit_code = exit_code;
+        if (exit_code == 0) {
+            info.result = RunResult::OK;
+        } else {
+            info.result = RunResult::RE;
+        }
+        return;
+    }
+
+    if (WIFSIGNALED(status)) {
+        int sig = WTERMSIG(status);
+        info.signal = sig;
+        if (sig == SIGXFSZ) {
+            info.result = RunResult::OLE;
+        } else if (sig == SIGXCPU) {
+            info.result = RunResult::TLE;
+        } else {
+            info.result = RunResult::RE;
+        }
+        return;
+    }
+
+    // Fallback
+    info.result = RunResult::RE;
 }
 
 } // namespace
@@ -471,6 +557,11 @@ bool sandbox_preflight_check(SandboxType type, std::string& error) {
             error = "nsjail executable not found in PATH";
             return false;
         }
+        // Stage 3B: nsjail production path requires delegated cgroup
+        if (!ensure_cgroup_ready()) {
+            error = "cgroup v2 delegation required for nsjail: " + g_cgroup_init_error;
+            return false;
+        }
         return true;
     }
     if (type == SandboxType::ISOLATE) {
@@ -479,6 +570,8 @@ bool sandbox_preflight_check(SandboxType type, std::string& error) {
     error = "Unknown sandbox type: " + sandbox_type_to_string(type);
     return false;
 }
+
+// ── Builtin runner (unchanged core, Stage 3B: remove bad_alloc stderr check) ──
 
 static RunInfo run_program_builtin(
     const std::string& executable_file,
@@ -622,6 +715,7 @@ static RunInfo run_program_builtin(
             info.result = RunResult::MLE;
             info.time_ms = final_time_ms;
             info.memory_mb = memory_mb;
+            info.termination_cause = TerminationCause::InfrastructureFailure;
             close(exec_error_pipe[0]);
             return info;
         }
@@ -642,6 +736,7 @@ static RunInfo run_program_builtin(
             info.result = RunResult::TLE;
             info.time_ms = final_time_ms;
             info.memory_mb = memory_mb;
+            info.termination_cause = TerminationCause::WallClockTimeout;
             close(exec_error_pipe[0]);
             return info;
         }
@@ -657,7 +752,7 @@ static RunInfo run_program_builtin(
     );
     int memory_mb = std::max(peak_memory_mb, rusage_memory_mb(usage));
 
-    // Check if exec failed (child wrote to pipe)
+    // Check if exec failed
     char exec_err = 0;
     ssize_t n = read(exec_error_pipe[0], &exec_err, 1);
     close(exec_error_pipe[0]);
@@ -677,10 +772,9 @@ static RunInfo run_program_builtin(
         info.signal = WTERMSIG(status);
     }
 
-    bool bad_alloc_error =
-        file_contains(error_file, "bad_alloc") ||
-        file_contains(error_file, "Cannot allocate memory") ||
-        file_contains(error_file, "cannot allocate memory");
+    // Stage 3B: removed bad_alloc stderr text check
+    // MLE is detected via VmSize polling + rlimit (above)
+    // exit(137) → RE (not MLE without oom_kill evidence)
 
     if (WIFEXITED(status)) {
         int exit_code = WEXITSTATUS(status);
@@ -688,7 +782,7 @@ static RunInfo run_program_builtin(
             info.result = RunResult::OK;
             return info;
         }
-        if (bad_alloc_error || reached_memory_limit(memory_mb, memory_limit_mb)) {
+        if (reached_memory_limit(memory_mb, memory_limit_mb)) {
             info.result = RunResult::MLE;
             return info;
         }
@@ -714,7 +808,7 @@ static RunInfo run_program_builtin(
             info.result = RunResult::TLE;
             return info;
         }
-        if (bad_alloc_error || reached_memory_limit(memory_mb, memory_limit_mb)) {
+        if (reached_memory_limit(memory_mb, memory_limit_mb)) {
             info.result = RunResult::MLE;
             return info;
         }
@@ -725,6 +819,8 @@ static RunInfo run_program_builtin(
     info.result = RunResult::RE;
     return info;
 }
+
+// ── nsjail runner (Stage 3B: cgroup v2 + barrier + trusted verdict) ──
 
 static RunInfo run_program_nsjail(
     const std::string& executable_file,
@@ -744,6 +840,12 @@ static RunInfo run_program_nsjail(
         output_limit_mb
     );
 
+    // Preflight: cgroup delegation must be ready
+    if (!g_cgroup_ready) {
+        return make_system_error(
+            "nsjail production mode requires delegated cgroup v2: " + g_cgroup_init_error);
+    }
+
     std::string prepare_error;
     if (!prepare_nsjail_filesystem(config, prepare_error)) {
         std::ofstream error_stream(config.error_file, std::ios::app);
@@ -751,24 +853,51 @@ static RunInfo run_program_nsjail(
         return make_system_error(prepare_error);
     }
 
+    // ── Create run cgroup ──────────────────────────────────
+
+    CgroupV2Limits cg_limits;
+    cg_limits.memory_max_bytes = cgroup_memory_max_bytes(memory_limit_mb);
+    cg_limits.memory_swap_max_bytes = 0;
+    cg_limits.pids_max = cgroup_pids_max();
+
+    CgroupV2Error cg_error;
+    if (!g_cgroup_mgr.create_run(cg_limits, cg_error)) {
+        return make_system_error(
+            cgroup_v2_error_message(cg_error, "run_create"));
+    }
+
+    // ── Pipes ─────────────────────────────────────────────
+
     int exec_error_pipe[2];
     if (pipe2(exec_error_pipe, O_CLOEXEC) < 0) {
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to create exec-error pipe for nsjail runner");
     }
 
-    // Pre-open files in parent so failures are detected as system errors.
-    int input_fd = open(config.input_file.c_str(), O_RDONLY);
-    if (input_fd < 0) {
+    int barrier_pipe[2];
+    if (pipe2(barrier_pipe, O_CLOEXEC) < 0) {
         close(exec_error_pipe[0]);
         close(exec_error_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
+        return make_system_error("Failed to create barrier pipe for nsjail runner");
+    }
+
+    // ── Pre-open files ─────────────────────────────────────
+
+    int input_fd = open(config.input_file.c_str(), O_RDONLY);
+    if (input_fd < 0) {
+        close(exec_error_pipe[0]); close(exec_error_pipe[1]);
+        close(barrier_pipe[0]); close(barrier_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to open nsjail input file: " + config.input_file + " - " + std::string(strerror(errno)));
     }
 
     int output_fd = open(config.output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (output_fd < 0) {
         close(input_fd);
-        close(exec_error_pipe[0]);
-        close(exec_error_pipe[1]);
+        close(exec_error_pipe[0]); close(exec_error_pipe[1]);
+        close(barrier_pipe[0]); close(barrier_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to open nsjail output file: " + config.output_file + " - " + std::string(strerror(errno)));
     }
 
@@ -776,25 +905,29 @@ static RunInfo run_program_nsjail(
     if (error_fd < 0) {
         close(input_fd);
         close(output_fd);
-        close(exec_error_pipe[0]);
-        close(exec_error_pipe[1]);
+        close(exec_error_pipe[0]); close(exec_error_pipe[1]);
+        close(barrier_pipe[0]); close(barrier_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to open nsjail error file: " + config.error_file + " - " + std::string(strerror(errno)));
     }
+
+    // ── Fork ──────────────────────────────────────────────
 
     pid_t pid = fork();
 
     if (pid < 0) {
-        close(input_fd);
-        close(output_fd);
-        close(error_fd);
-        close(exec_error_pipe[0]);
-        close(exec_error_pipe[1]);
+        close(input_fd); close(output_fd); close(error_fd);
+        close(exec_error_pipe[0]); close(exec_error_pipe[1]);
+        close(barrier_pipe[0]); close(barrier_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to fork nsjail runner process");
     }
 
     if (pid == 0) {
+        // ── Child ──────────────────────────────────────────
         setpgid(0, 0);
         close(exec_error_pipe[0]);
+        close(barrier_pipe[1]); // close write end
 
         dup2(input_fd, STDIN_FILENO);
         dup2(output_fd, STDOUT_FILENO);
@@ -811,6 +944,16 @@ static RunInfo run_program_nsjail(
 
         set_limit_or_exit(RLIMIT_CORE, 0);
 
+        // ── Barrier: wait for parent to add us to cgroup ──
+        char barrier_byte = 0;
+        ssize_t br = read(barrier_pipe[0], &barrier_byte, 1);
+        close(barrier_pipe[0]);
+        if (br != 1) {
+            // Parent failed — exit immediately
+            _exit(126);
+        }
+
+        // ── Exec nsjail ────────────────────────────────────
         std::vector<std::string> args = build_nsjail_args(config);
         std::string command_log = join_args_for_log(args);
         dprintf(STDERR_FILENO, "[nsjail] command: %s\n", command_log.c_str());
@@ -833,14 +976,47 @@ static RunInfo run_program_nsjail(
         _exit(127);
     }
 
+    // ── Parent ────────────────────────────────────────────
     close(input_fd);
     close(output_fd);
     close(error_fd);
     close(exec_error_pipe[1]);
+    close(barrier_pipe[0]);
 
+    // Join child to run cgroup
+    CgroupV2EventSnapshot events_before;
+    {
+        CgroupV2Stats stats_before;
+        if (g_cgroup_mgr.read_stats(stats_before, cg_error)) {
+            events_before = make_snapshot(stats_before);
+        }
+        // Continue even if read fails — baseline may be partial
+    }
+
+    if (!g_cgroup_mgr.join_process(pid, cg_error)) {
+        // Join failed — kill waiting child and return SE
+        kill(pid, SIGKILL);
+        waitpid(pid, nullptr, 0);
+        close(exec_error_pipe[0]);
+        close(barrier_pipe[1]);
+        g_cgroup_mgr.cleanup_run(cg_error);
+        return make_system_error(
+            cgroup_v2_error_message(cg_error, "process_join"));
+    }
+
+    // Release child
+    {
+        char go = 'G';
+        ssize_t bw = write(barrier_pipe[1], &go, 1);
+        (void)bw;
+    }
+    close(barrier_pipe[1]);
+
+    // ── Monitor loop ──────────────────────────────────────
     auto start_time = std::chrono::steady_clock::now();
     int status = 0;
     struct rusage usage {};
+    TerminationCause cause = TerminationCause::None;
 
     while (true) {
         pid_t wait_result = wait4(pid, &status, WNOHANG, &usage);
@@ -858,50 +1034,27 @@ static RunInfo run_program_nsjail(
 
         if (wait_result == -1) {
             close(exec_error_pipe[0]);
+            g_cgroup_mgr.cleanup_run(cg_error);
             return make_system_error("wait4 failed for nsjail runner process");
         }
 
+        // OLE check
         if (output_file_reached_limit(config.output_file, config.output_limit_mb)) {
+            cause = TerminationCause::OutputLimit;
+            // Kill via cgroup first, then process group
+            g_cgroup_mgr.kill_run(cg_error);
             kill_process_group(pid);
             wait4(pid, &status, 0, &usage);
-
-            auto end_time = std::chrono::steady_clock::now();
-            int final_time_ms = static_cast<int>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    end_time - start_time
-                ).count()
-            );
-            int memory_mb = rusage_memory_mb(usage);
-            close(exec_error_pipe[0]);
-
-            RunInfo info;
-            info.result = RunResult::OLE;
-            info.time_ms = final_time_ms;
-            info.memory_mb = memory_mb;
-            return info;
+            break;
         }
 
+        // TLE check
         if (elapsed_ms > config.time_limit_ms) {
+            cause = TerminationCause::WallClockTimeout;
+            g_cgroup_mgr.kill_run(cg_error);
             kill_process_group(pid);
             wait4(pid, &status, 0, &usage);
-
-            auto end_time = std::chrono::steady_clock::now();
-            int final_time_ms = static_cast<int>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    end_time - start_time
-                ).count()
-            );
-            int memory_mb = rusage_memory_mb(usage);
-            close(exec_error_pipe[0]);
-
-            RunInfo info;
-            info.result = RunResult::TLE;
-            info.time_ms = final_time_ms;
-            info.memory_mb = memory_mb;
-            if (output_file_reached_limit(config.output_file, config.output_limit_mb)) {
-                info.result = RunResult::OLE;
-            }
-            return info;
+            break;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -915,18 +1068,35 @@ static RunInfo run_program_nsjail(
     );
     int memory_mb = rusage_memory_mb(usage);
 
-    // Check if nsjail exec itself failed
+    // ── Read cgroup events after ──────────────────────────
+    CgroupV2EventSnapshot events_after;
+    unsigned long long cgroup_peak = 0;
+    {
+        CgroupV2Stats stats_after;
+        if (g_cgroup_mgr.read_stats(stats_after, cg_error)) {
+            events_after = make_snapshot(stats_after);
+            cgroup_peak = stats_after.memory_peak_bytes;
+        }
+    }
+
+    CgroupV2EventSnapshot events_delta = delta(events_after, events_before);
+
+    // ── Check if nsjail exec itself failed ────────────────
     char exec_err = 0;
     ssize_t n = read(exec_error_pipe[0], &exec_err, 1);
     close(exec_error_pipe[0]);
 
     if (n > 0) {
+        g_cgroup_mgr.cleanup_run(cg_error);
         return make_system_error("Failed to execute nsjail for running phase");
     }
 
+    // ── Build result ──────────────────────────────────────
     RunInfo info;
     info.time_ms = final_time_ms;
     info.memory_mb = memory_mb;
+    info.termination_cause = cause;
+    info.cgroup_memory_peak_bytes = cgroup_peak;
 
     if (WIFEXITED(status)) {
         info.exit_code = WEXITSTATUS(status);
@@ -935,62 +1105,18 @@ static RunInfo run_program_nsjail(
         info.signal = WTERMSIG(status);
     }
 
-    std::string stderr_content = read_file_to_string(config.error_file);
+    // Classify verdict using cgroup events + termination cause
+    // Default prior to classification
+    info.result = RunResult::OK;
+    classify_verdict(info, status, events_delta, cause);
 
-    bool stderr_says_tle =
-        text_contains_case_insensitive(stderr_content, "time limit") ||
-        text_contains_case_insensitive(stderr_content, "timed out");
-    bool stderr_says_mle =
-        text_contains_case_insensitive(stderr_content, "memory") ||
-        text_contains_case_insensitive(stderr_content, "oom") ||
-        text_contains_case_insensitive(stderr_content, "bad_alloc");
-    bool stderr_says_ole =
-        text_contains_case_insensitive(stderr_content, "File size limit exceeded") ||
-        output_file_reached_limit(config.output_file, config.output_limit_mb);
+    // ── Cleanup run cgroup ────────────────────────────────
+    g_cgroup_mgr.cleanup_run(cg_error);
+    // Cleanup failure does not change verdict — it's a resource leak warning
 
-    if (WIFEXITED(status)) {
-        int exit_code = WEXITSTATUS(status);
-        if (exit_code == 0) {
-            info.result = RunResult::OK;
-            return info;
-        }
-        if (stderr_says_tle) {
-            info.result = RunResult::TLE;
-            return info;
-        }
-        if (stderr_says_mle) {
-            info.result = RunResult::MLE;
-            return info;
-        }
-        if (stderr_says_ole) {
-            info.result = RunResult::OLE;
-            return info;
-        }
-        info.result = RunResult::RE;
-        return info;
-    }
-
-    if (WIFSIGNALED(status)) {
-        int sig = WTERMSIG(status);
-        if (sig == SIGXFSZ) {
-            info.result = RunResult::OLE;
-            return info;
-        }
-        if (sig == SIGKILL) {
-            if (final_time_ms > config.time_limit_ms) {
-                info.result = RunResult::TLE;
-                return info;
-            }
-            info.result = RunResult::RE;
-            return info;
-        }
-        info.result = RunResult::RE;
-        return info;
-    }
-
-    info.result = RunResult::RE;
     return info;
 }
+
 static RunInfo run_program_isolate(
     const std::string& executable_file,
     const std::string& input_file,

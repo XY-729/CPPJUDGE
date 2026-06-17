@@ -34,6 +34,24 @@ run_judge() {
     return 0
 }
 
+# ── Check if cgroup delegation is available ────────────────
+check_cgroup_delegated() {
+    # Check if we're running inside a delegated service
+    # by testing if we can create a child cgroup in our service root
+    local cg_mount cg_path test_dir
+    cg_mount=$(findmnt -n -o TARGET -t cgroup2 2>/dev/null || echo "/sys/fs/cgroup")
+    cg_path=$(awk -F: '$2==""{print $3; exit}' /proc/self/cgroup 2>/dev/null || echo "")
+    if [ -z "$cg_path" ]; then
+        return 1
+    fi
+    test_dir="${cg_mount}${cg_path}/.cppjudge_mle_test_$$"
+    if mkdir "$test_dir" 2>/dev/null; then
+        rmdir "$test_dir" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+
 # ── Copy submission to temp (never touch tracked files) ────
 SUB_COPY=$(mktemp -t cppjudge_mle_sub.XXXXXX.cpp)
 cleanup_sub() { rm -f "$SUB_COPY"; }
@@ -80,14 +98,28 @@ with p.open('w') as f: json.dump(data, f, indent=4); f.write('\n')
     ns_verdict=$(judge_log_field "final_verdict")
     echo "  nsjail MLE verdict: $ns_verdict"
 
-    if [ "$ns_verdict" = "Runtime Error" ]; then
-        fail "nsjail MLE -> got Runtime Error (MLE misclassified as RE)"
-    elif [ "$ns_verdict" = "Memory Limit Exceeded" ]; then
-        pass "nsjail MLE -> Memory Limit Exceeded"
-    elif [ "$ns_verdict" = "Time Limit Exceeded" ]; then
-        pass "nsjail MLE -> Time Limit Exceeded (known nsjail MLE drift, not RE)"
+    # Stage 3B: nsjail requires cgroup delegation.
+    # Without delegation, SE is the correct fail-closed behavior.
+    if check_cgroup_delegated; then
+        echo "  cgroup: delegated (expecting real MLE or known TLE drift)"
+        if [ "$ns_verdict" = "Runtime Error" ]; then
+            fail "nsjail MLE -> got Runtime Error (MLE misclassified as RE)"
+        elif [ "$ns_verdict" = "Memory Limit Exceeded" ]; then
+            pass "nsjail MLE -> Memory Limit Exceeded"
+        elif [ "$ns_verdict" = "Time Limit Exceeded" ]; then
+            pass "nsjail MLE -> Time Limit Exceeded (known nsjail MLE drift)"
+        elif [ "$ns_verdict" = "System Error" ]; then
+            fail "nsjail MLE -> System Error in delegated environment (unexpected)"
+        else
+            fail "nsjail MLE -> unexpected verdict: $ns_verdict"
+        fi
     else
-        fail "nsjail MLE -> unexpected verdict: $ns_verdict"
+        echo "  cgroup: NOT delegated (expecting SE — correct fail-closed)"
+        if [ "$ns_verdict" = "System Error" ]; then
+            pass "nsjail MLE -> System Error (correct: no delegation, fail-closed)"
+        else
+            fail "nsjail MLE -> expected System Error without delegation, got $ns_verdict"
+        fi
     fi
 
     cleanup_nsprob

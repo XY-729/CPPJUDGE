@@ -16,6 +16,13 @@ enum class SandboxType {
     ISOLATE
 };
 
+enum class TerminationCause {
+    None,
+    WallClockTimeout,
+    OutputLimit,
+    InfrastructureFailure
+};
+
 struct RunInfo {
     RunResult result = RunResult::OK;
     int time_ms = 0;
@@ -25,6 +32,12 @@ struct RunInfo {
     std::string error_message;
     int exit_code = -1;
     int signal = -1;
+
+    // Stage 3B: parent-side termination tracking
+    TerminationCause termination_cause = TerminationCause::None;
+
+    // Stage 3B: cgroup v2 peak memory from memory.peak (bytes)
+    unsigned long long cgroup_memory_peak_bytes = 0;
 };
 
 RunInfo run_program(
