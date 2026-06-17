@@ -18,18 +18,23 @@ skip_unless_cgroup_delegated() {
         exit 77
     fi
 
-    # Verify controllers are available
-    local ctrls ok
-    ok=true
-    if [ -f "$test_dir/cgroup.controllers" ]; then
-        ctrls=$(tr '\n' ' ' < "$test_dir/cgroup.controllers" 2>/dev/null)
-        if ! echo "$ctrls" | grep -q "memory"; then ok=false; fi
-        if ! echo "$ctrls" | grep -q "pids"; then ok=false; fi
+    # Verify controllers are available in the service root (parent cgroup).
+    # Child cgroup controllers are only inherited after subtree_control is enabled
+    # (done by CPPJUDGE init_service), not needed for delegation detection.
+    local ctrls=""
+    local ok=true
+    local sr_ctrl="/sys/fs/cgroup${cg}/cgroup.controllers"
+    if [[ ! -r "$sr_ctrl" ]]; then
+        ok=false
+    else
+        ctrls="$(tr '\n' ' ' <"$sr_ctrl" 2>/dev/null)" || ok=false
+        [[ " $ctrls " == *" memory "* ]] || ok=false
+        [[ " $ctrls " == *" pids "* ]] || ok=false
     fi
     rmdir "$test_dir" 2>/dev/null || true
 
     if ! $ok; then
-        echo "SKIP: controllers missing in delegated cgroup (have: ${ctrls:-none}, need: memory pids)"
+        echo "SKIP: controllers missing in service root cgroup (have: ${ctrls:-none}, need: memory pids)"
         exit 77
     fi
     return 0

@@ -1,5 +1,6 @@
 #include "runner.h"
 #include "cgroup_v2.h"
+#include "seccomp_config.h"
 
 #include <algorithm>
 #include <chrono>
@@ -40,6 +41,10 @@ static CgroupV2Manager g_cgroup_mgr;
 static bool g_cgroup_attempted = false;
 static bool g_cgroup_ready = false;
 static std::string g_cgroup_init_error;
+static SeccompConfig g_seccomp_config;
+static bool g_seccomp_checked = false;
+static bool g_seccomp_ready = false;
+static std::string g_seccomp_error;
 
 static bool ensure_cgroup_ready() {
     if (g_cgroup_attempted) return g_cgroup_ready;
@@ -51,6 +56,29 @@ static bool ensure_cgroup_ready() {
         return false;
     }
     g_cgroup_ready = true;
+    return true;
+}
+
+static bool ensure_seccomp_ready() {
+    if (g_seccomp_checked) return g_seccomp_ready;
+    g_seccomp_checked = true;
+
+    g_seccomp_config.enabled = true;
+
+    const char* env_path = std::getenv("CPPJUDGE_SECCOMP_POLICY");
+    if (env_path && env_path[0] != '\0') {
+        g_seccomp_config.policy_path = env_path;
+    } else {
+        g_seccomp_config.policy_path = default_seccomp_policy_path();
+    }
+
+    std::string validate_error;
+    if (!g_seccomp_config.validate(validate_error)) {
+        g_seccomp_error = "seccomp policy validation failed: " + validate_error;
+        return false;
+    }
+
+    g_seccomp_ready = true;
     return true;
 }
 
@@ -350,6 +378,12 @@ std::vector<std::string> build_nsjail_args(const SandboxRunConfig& config) {
         std::to_string(BUILTIN_NPROC_LIMIT)
     };
 
+    // Stage 3C: enforce seccomp policy (fail-closed via preflight)
+    if (g_seccomp_ready) {
+        args.push_back("--seccomp_policy");
+        args.push_back(g_seccomp_config.policy_path);
+    }
+
     args.push_back("--bindmount_ro");
     args.push_back(absolute_path_for_nsjail(config.executable_file) + ":" + config.sandbox_solution_file);
 
@@ -560,6 +594,11 @@ bool sandbox_preflight_check(SandboxType type, std::string& error) {
         // Stage 3B: nsjail production path requires delegated cgroup
         if (!ensure_cgroup_ready()) {
             error = "cgroup v2 delegation required for nsjail: " + g_cgroup_init_error;
+            return false;
+        }
+        // Stage 3C: nsjail production path requires seccomp policy
+        if (!ensure_seccomp_ready()) {
+            error = "seccomp policy required for nsjail: " + g_seccomp_error;
             return false;
         }
         return true;

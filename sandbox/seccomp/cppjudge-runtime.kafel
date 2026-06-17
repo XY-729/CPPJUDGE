@@ -1,0 +1,37 @@
+POLICY cppjudge_runtime {
+    DENY {
+        mount,
+        pivot_root,
+        chroot,
+        reboot,
+        swapon,
+        swapoff,
+        sethostname,
+        setdomainname,
+        init_module,
+        finit_module,
+        delete_module,
+        kexec_load,
+        kexec_file_load,
+        unshare,
+        setns,
+        ptrace,
+        process_vm_readv,
+        process_vm_writev,
+        kcmp,
+        bpf,
+        perf_event_open,
+        userfaultfd,
+        open_by_handle_at,
+        name_to_handle_at,
+        fanotify_init,
+        keyctl,
+        add_key,
+        request_key,
+        io_uring_setup,
+        io_uring_enter,
+        io_uring_register
+    }
+}
+USE cppjudge_runtime
+DEFAULT ALLOW

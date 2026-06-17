@@ -12,6 +12,7 @@ add_library(cppjudge_lib STATIC
     src/runner.cpp
     src/comparer.cpp
     src/cgroup_v2.cpp
+    src/seccomp_config.cpp
 )
 
 target_include_directories(cppjudge_lib PUBLIC
@@ -195,6 +196,19 @@ if(NSJAIL_EXECUTABLE)
     set_tests_properties(test_security_nsjail_known_gaps PROPERTIES
         ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
         LABELS "security;security-known-gap;nsjail"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77
+    )
+
+    add_test(
+        NAME test_security_seccomp
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/security/test_seccomp_security.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set_tests_properties(test_security_seccomp PROPERTIES
+        ENVIRONMENT "CPPJUDGE_BIN=$<TARGET_FILE:cppjudge>"
+        LABELS "security;security-must-block;nsjail"
         TIMEOUT 300
         RUN_SERIAL TRUE
         SKIP_RETURN_CODE 77
