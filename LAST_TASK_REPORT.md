@@ -1,27 +1,54 @@
-# Last Task Report: Stage 2 Control Plane Archive
+# Last Task Report: Project Overview and Roadmap Accuracy Review
 
-**Date**: 2026-06-16
-**TASK_ID**: STAGE-2-CONTROL-PLANE-COMMIT
+**Date**: 2026-06-17
+**TASK_ID**: DOC-REVIEW-OVERVIEW-ROADMAP
 **STATUS**: COMPLETED
 
-## Stage 2 Completion Summary
+## Scope
 
-### Root Cause of CI Failure
-Unit test `test_verdict_strings` failed on Ubuntu 24.04 (GCC 14). `CompileInfo`
-and `RunInfo` structs had uninitialized scalar members (`result`, `time_ms`,
-`memory_mb`) — reading them after default construction is undefined behavior.
-RHEL VM (GCC 11) passed by chance due to zeroed stack memory.
+Reviewed `docs/OVERVIEW.md` and `docs/ROADMAP.md` against current source
+implementation for accuracy. Corrected stage statuses and wording where
+code evidence contradicted documentation claims.
 
-### Fix
-Default member initializers added:
-- `src/compiler.h`: `CompileResult result = CompileResult::OK`
-- `src/runner.h`: `RunResult result = RunResult::OK`, `int time_ms = 0`, `int memory_mb = 0`
+## Key Findings
 
-### Verification
-- Local portable: 11/11 PASS
-- GitHub CI: 11/11 PASS (run 27618081392)
-- Fix commit: 2dae1e3
+### Stage 1: Changed from Completed to In Progress
 
-### This Task
-Archived control plane files (`.claude/`, docs, task reports) into Git.
-No source or test changes. Stage 2 marked COMPLETE. Stage 3 NOT_STARTED.
+- `judge.cpp` is clean — zero stderr-based string guessing for SE.
+- `compiler.cpp` uses only structured `CompileInfo` for error classification.
+- BUT: builtin runner checks `error_file` for `bad_alloc` to determine MLE
+  (`src/runner.cpp:680-682`).
+- BUT: nsjail runner parses stderr to directly set TLE, MLE, OLE verdicts
+  (`src/runner.cpp:938-965` — `stderr_says_tle`, `stderr_says_mle`,
+  `stderr_says_ole`).
+- The structural foundation is solid; the remaining stderr dependencies
+  require Stage 3 cgroup v2 integration to resolve.
+
+### Stage 2: Remains Completed
+
+- All 8 verdicts have automated test coverage (builtin: 8/8; nsjail: 7/8
+  with known MLE drift accepted).
+- MUST_BLOCK security attacks (9 categories) all covered by real attack tests.
+- KNOWN_GAP items (socket, fork bomb, threads, /bin/sh, seccomp, precise OOM,
+  minimal rootfs) belong to Stage 3 hardening — not test infrastructure gaps.
+- CI integrated; portable profile passes in CI.
+
+### Other Corrections
+
+- OVERVIEW: runner description changed from "三种沙箱后端" to
+  "当前有两种可用后端和一种占位接口".
+- OVERVIEW: stderr limitation reworded from "辅助判断" to explicit description
+  of which verdicts are directly set by stderr matching.
+- ROADMAP: Stage 1 split into 已完成 / 尚未完成 sections with source line
+  references.
+
+## Commits
+
+- Start: `9054a1b` docs: add project overview and development roadmap
+- Fix: `95f0608` docs: correct roadmap status against current implementation
+
+## Next Task
+
+Stage 3A: Design and implement cgroup v2 memory and process control for nsjail
+runner. Replace stderr-based MLE classification with `memory.events` OOM
+detection.
