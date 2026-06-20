@@ -1,86 +1,94 @@
 # CPPJUDGE 项目进度
 
+Updated: 2026-06-20
+
+## 当前结论
+
+CPPJUDGE 已经从“教学原型”进入“具备产品化骨架的单机判题内核”阶段：核心判题流程、结构化错误模型、portable 测试、cgroup v2 管理代码和 seccomp 接入代码都已存在。
+
+但它距离公开不可信代码的产品级判题器仍有明显差距。当前最大缺口不是普通 AC/WA/CE/RE 判题，而是可重复验证的安全部署闭环：cgroup delegation、nsjail 安全 profile、seccomp 策略强度、固定 rootfs、低权限身份和运维诊断。
+
 ## 阶段完成状态
 
-| 阶段 | 状态 | 关键 Commit | 备注 |
-|------|------|------------|------|
-| 阶段 1 | In Progress | ecc46d1, 43884a7 | 结构化 CE/RE/SE 主体完成；runner stderr 残留待清理 |
-| 阶段 2 | Completed | 2dae1e3 | 测试基础设施, CI, 默认初始化修复 |
-| 阶段 3 | In Progress | — | 3A cgroup v2 内存与进程控制 |
-| 阶段 4 | Planned | — | CLI 和用户体验 |
-| 阶段 5 | Planned | — | 题目格式和日志格式 |
-| 阶段 6 | Planned | — | 安装、发布和可移植性 |
-| 阶段 7 | Planned | — | 可靠性和性能 |
+| 阶段 | 状态 | 关键 Commit / 证据 | 备注 |
+|------|------|--------------------|------|
+| 阶段 1：结构化错误模型 | Completed | `ecc46d1`, `43884a7`, `d772239` | CE/RE/SE 结构化边界已建立；runner 不再依赖用户 stderr 伪造系统错误 |
+| 阶段 2：测试基础设施 | Completed | `ac04ac7` → `4106bbb` | unit/integration/regression/security profile 已建立；portable profile 当前 12/12 PASS |
+| 阶段 3A：cgroup v2 生命周期 | Implemented / Environment-gated | `0c5eb50`, `04de3c7`, `d772239` | 代码已实现；当前 SSH 会话缺 cgroup write permission，nsjail 安全测试未验证 |
+| 阶段 3B：可信 nsjail verdict | Implemented / Needs delegated verification | `d772239` | 通过 cgroup events、wall clock、output size 和 exit status 分类；需在 delegated service 中跑全量 |
+| 阶段 3C：seccomp 接入 | Implemented / Policy needs hardening | `7e69963` | 已接入 Kafel policy；当前策略为 deny-list + `DEFAULT ALLOW`，不是最终产品级 allow-list |
+| 阶段 4：CLI / doctor / UX | Planned | — | 仍是位置参数 CLI；缺 `cppjudge doctor` |
+| 阶段 5：schema / 题目格式 / 日志格式 | Planned | — | 缺稳定 schema version 和兼容策略 |
+| 阶段 6：安装、部署和可移植性 | Planned | `deploy/cppjudge.service.example` | 有 systemd 示例，但缺正式安装、rootfs、SECURITY/TROUBLESHOOTING |
+| 阶段 7：可靠性和性能 | Planned | — | 运行目录清理、磁盘限额、worker 模型尚未进入主线 |
 
-### 阶段 1 详情
+## 2026-06-20 验证快照
 
-#### 已完成
+在 Rocky VM 中执行：
 
-- CompileInfo / RunInfo 结构化返回
-- CE、RE、SE 的主要责任边界
-- fork / exec / 文件系统和沙箱启动错误的结构化传递
-- judge.cpp 中基于 stderr 猜测 SE 的逻辑移除
-- stderr 伪造不能再导致 SE 的回归测试
-
-#### 尚未完成
-
-- 移除 builtin runner 对 bad_alloc 等 stderr 文本的 MLE 判定（`src/runner.cpp:680-682`）
-- 移除 nsjail runner 对 stderr 的 TLE、MLE、OLE 判定（`src/runner.cpp:938-965`）
-- 使用墙钟、文件大小、进程状态和 cgroup 内核数据完成可信分类
-
-### 阶段 2 详情
-
-#### 已完成
-
-- unit、integration、regression、security 测试分层
-- quick、portable、full、nsjail、security profiles
-- AC、WA、CE、RE、TLE、MLE、OLE、SE 自动化覆盖
-- MUST_BLOCK 安全攻击测试
-- CI 集成
-- 测试失败返回非零状态
-
-#### 后续扩展
-
-- 阶段 3 每新增 cgroup、seccomp、rootfs 能力时继续补充攻击与回归测试
-
-### 阶段 3A：cgroup v2 内存与进程控制
-
-首要目标：
-
-- `memory.max` — 硬内存上限
-- `memory.peak` — 峰值内存记录
-- `memory.events` — OOM 事件可信检测
-- `pids.max` — 进程和线程总量限制
-- `cgroup.kill` — 超限时清理
-
-阶段 3A 将首先替换 nsjail MLE 的 stderr 文本判断。TLE 和 OLE 的可信判定也应在同一阶段检查并移除文本依赖。
-
-## 全局优先级
-
+```bash
+bash scripts/check_nsjail_env.sh
+bash scripts/run_all_tests.sh portable
+bash scripts/run_all_tests.sh nsjail
+bash scripts/run_all_tests.sh security
 ```
-P0 (决定可靠性):
-  1. [DONE] 建立真实构建和测试基线
-  2. [DONE] 重构 RunInfo / CompileInfo, 结构化区分 RE 和 SE
-  3. [DONE] 建立完整 verdict 回归测试
-  4. [ ] 接入 cgroup v2 内存和进程控制（← 当前任务）
-  5. [ ] 增加 seccomp
-  6. [ ] 明确低权限用户映射
-  7. [ ] 固定运行和编译 rootfs
-  8. [ ] 确保生产模式永不回退 builtin
 
-P1 (决定易用性):
-  9. [ ] cppjudge doctor
-  10. [ ] 清晰的子命令和参数
-  11. [ ] 稳定的 problem.json 规范
-  12. [ ] 稳定的 judge_log.json 规范
-  13. [ ] 友好的错误信息
-  14. [DONE] 一条命令构建和测试
-  15. [ ] Quick Start 和示例题
-  16. [ ] 正式安装流程
+结果：
 
-P2 (产品成熟后):
-  17. [ ] 多 worker 并发
-  18. [ ] Special Judge
-  19. [ ] 多语言支持
-  20. [ ] 静态编译支持
-```
+| 检查项 | 状态 | 细节 |
+|--------|------|------|
+| nsjail | PASS | `/usr/local/bin/nsjail` found |
+| nsjail cgroup flags | PASS | `--use_cgroupv2`, `--cgroup_mem_max`, `--cgroup_pids_max` 等可用 |
+| cgroup v2 | PASS | unified hierarchy detected; memory/pids controllers present |
+| cgroup write permission | FAIL / ENV | 当前 SSH 会话无法在 `/sys/fs/cgroup` 创建子 cgroup |
+| portable profile | PASS | 12/12 tests passed |
+| nsjail profile | NOT_VERIFIED | 5 个 nsjail/security 测试全部 skipped |
+| security profile | PARTIAL | builtin security passed；nsjail/seccomp tests skipped |
+
+## 当前 P0 风险
+
+1. **nsjail 安全测试没有在 delegated service 中通过。**
+   当前 profile 的 PASS 包含 skipped tests，不能作为产品安全证据。
+
+2. **seccomp 仍是 deny-list。**
+   `sandbox/seccomp/cppjudge-runtime.kafel` 使用 `DEFAULT ALLOW`。它能挡住一批高危 syscall，但不是最终产品级最小权限策略。
+
+3. **rootfs 未固定。**
+   运行阶段挂载少量动态库，编译阶段只读挂载宿主 `/usr`、`/lib64`、`/lib`、`/bin`。产品级需要版本化 runtime/compile rootfs。
+
+4. **UID/GID 与低权限模型未定型。**
+   当前文档有部署方向，但 nsjail 参数和安装流程还没有形成稳定规范。
+
+5. **CLI 与日志 schema 尚未产品化。**
+   当前位置参数适合开发，但不适合长期 API；日志缺 schema version、rootfs version、sandbox version 等字段。
+
+## Git 分支快照
+
+GitHub 远端：
+
+| 分支 | 提交 | 判断 |
+|------|------|------|
+| `master` | `c882bc1` | 主线，落后当前 VM 开发状态 |
+| `stage2-testing` | `4106bbb` | 被 VM `stage3d-rootfs` 包含，合并后可删 |
+| `claudeworker` | `43884a7` | 被 VM `stage3d-rootfs` 包含，合并后可删 |
+| `codex/judge-architecture-tests` | `67ee464` | 已被 `master` 包含，可删 |
+
+VM 本地：
+
+| 分支 | 提交 | 判断 |
+|------|------|------|
+| `stage3d-rootfs` | `7e69963` | 当前最新开发状态，尚未推到 GitHub |
+| `stage2-testing` | `7e69963` | VM 本地同指向最新状态，但 GitHub 同名分支仍旧 |
+
+## 建议下一步
+
+1. 确认合并策略：直接把 `stage3d-rootfs` 合入 GitHub `master`，还是先推 PR 分支。
+2. 合并前把本次文档刷新提交到当前开发分支。
+3. 在 delegated systemd 环境中跑通：
+   - `bash scripts/run_all_tests.sh nsjail`
+   - `bash scripts/run_all_tests.sh security`
+4. 合并后删除无用远端分支：
+   - `codex/judge-architecture-tests`
+   - `claudeworker`
+   - `stage2-testing`
+5. 进入产品化 P0：fixed rootfs、seccomp allow-list、low-privilege mapping、doctor。

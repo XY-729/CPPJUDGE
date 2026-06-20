@@ -1,371 +1,180 @@
-# nsjail Integration Plan
+# CPPJUDGE nsjail / cgroup / seccomp Plan
 
-This document describes the nsjail backend plan and current implementation
-status for CPPJUDGE. The project now has an nsjail MVP runner, but the profile is
-still being hardened and is not yet a final product-grade sandbox.
+Updated: 2026-06-20
 
----
+## Current status
 
-## Current nsjail Status
+CPPJUDGE now has an nsjail backend with cgroup v2 and seccomp integration code, but the full product-grade path is still environment-gated.
 
-Current implementation status:
+Implemented in code:
 
-- nsjail MVP runner is implemented behind `sandbox_type = "nsjail"`.
-- The builtin runner remains the default path.
-- Each run uses a per-run `sandbox_root` under `build/runs/<run_id>/`.
-- The compiled `solution` is bind-mounted read-only into the jail.
-- The per-run `user_output` directory is bind-mounted read/write.
-- A small C++-oriented set of dynamic-linker files is bind-mounted read-only.
-- `procfs` is disabled inside the jail with `--disable_proc`.
-- nsjail's default network namespace isolation is preserved and tested.
-- Basic nsjail rlimits are applied:
-  - `RLIMIT_AS`
-  - `RLIMIT_FSIZE`
-  - `RLIMIT_CORE`
-  - `RLIMIT_CPU`
-  - `RLIMIT_NOFILE`
-  - `RLIMIT_NPROC`
-- Manual nsjail tests cover:
-  - AC
-  - RE
-  - TLE
-  - MLE
-  - OLE
-  - stderr capture
-  - filesystem isolation
-  - network isolation
+- `sandbox_type = "nsjail"` compile and run paths.
+- Per-run `sandbox_root`.
+- Read-only solution bind mount.
+- Writable `user_output` bind mount.
+- Selected dynamic library bind mounts.
+- `--disable_proc`.
+- Network namespace behavior through nsjail defaults.
+- cgroup v2 service/run lifecycle.
+- `memory.max`, `memory.swap.max`, `pids.max`.
+- `memory.events` / `oom_kill` based MLE classification.
+- `memory.peak` collection.
+- `cgroup.kill` cleanup with fallback.
+- seccomp policy path validation and `--seccomp_policy` argument injection.
+- Production preflight that fails closed when nsjail, delegated cgroup, or seccomp policy is unavailable.
 
-Known limitations:
+Current 2026-06-20 VM verification:
 
-- The dynamic library list is still minimal and C++ oriented.
-- The nsjail memory limit is currently an `RLIMIT_AS` fallback, not precise
-  cgroup memory accounting.
-- There is no seccomp whitelist yet.
-- There is no managed minimal rootfs yet.
-- Low-privilege user mapping and production cgroup policy still need design and
-  deployment work.
+| Check | Status |
+|-------|--------|
+| nsjail executable | PASS |
+| nsjail cgroup flags | PASS |
+| cgroup v2 detected | PASS |
+| current SSH session can create child cgroup | FAIL |
+| portable profile | PASS |
+| delegated nsjail tests | NOT_VERIFIED / skipped |
+| seccomp security tests | NOT_VERIFIED / skipped |
 
----
+## Product-grade interpretation
 
-## cgroup v2 Precheck
+The nsjail path is not yet product-grade merely because the code exists. It becomes product-grade only when the target deployment can repeatedly run the nsjail/security/seccomp tests without skipped cases.
 
-cgroup v2 is deployment-specific. CPPJUDGE should not blindly add cgroup
-arguments to `run_program_nsjail(...)` until the target machine has been checked.
-Before enabling cgroup v2 memory or pids limits, verify:
+The most important missing proof is delegated cgroup execution:
 
-- nsjail is installed and executable.
-- nsjail supports the required cgroup flags:
-  - `--use_cgroupv2`
-  - `--cgroupv2_mount`
-  - `--cgroup_mem_max`
-  - `--cgroup_pids_max`
-  - `--cgroup_cpu_ms_per_sec`
-- The system has a cgroup v2 unified hierarchy mounted.
-- `/sys/fs/cgroup/cgroup.controllers` is present and contains useful
-  controllers.
-- The judge runtime user can create or be delegated a child cgroup.
-- Production deployment uses systemd or a dedicated judge user/service to grant
-  cgroup permissions safely.
+```text
+Delegate=memory pids
+```
 
-Current strategy:
+Without this, `memory.max`, `pids.max`, `memory.events`, and `cgroup.kill` cannot be proven in the actual sandbox path.
 
-- Keep the existing rlimit fallback working everywhere.
-- Do not make cgroup availability a requirement for normal local judging.
-- Use `scripts/check_nsjail_env.sh` to inspect a machine before enabling cgroup
-  integration.
-- Add `--use_cgroupv2`, `--cgroup_mem_max`, and `--cgroup_pids_max` only after
-  the environment is confirmed.
+## Current architecture
 
-## cgroup v2 Dry-run Argument Preview
+### Compile phase
 
-Before changing `build_nsjail_args(...)`, CPPJUDGE provides a dry-run helper:
+The nsjail compile path:
+
+- copies the submission into the run directory as `submission.cpp`;
+- creates a compile sandbox root;
+- mounts the run directory at `/work`;
+- mounts compiler/toolchain paths such as `/usr`, `/lib64`, `/lib`, `/bin`;
+- runs `/usr/bin/g++` inside nsjail.
+
+This is better than running the compiler directly on user-controlled code, but it is not the final product-grade compile sandbox because it still depends on broad host read-only mounts.
+
+### Runtime phase
+
+The nsjail runtime path:
+
+- creates a per-run sandbox root;
+- bind-mounts `solution` read-only as `/sandbox/solution`;
+- bind-mounts `user_output` writable as `/sandbox/user_output`;
+- mounts selected dynamic-linker files;
+- disables procfs;
+- redirects stdin/stdout/stderr through pre-opened file descriptors;
+- waits on a parent barrier until the nsjail process joins the run cgroup;
+- classifies TLE/OLE/MLE via parent timing/output checks and cgroup events instead of user stderr.
+
+### cgroup v2 lifecycle
+
+The intended lifecycle is:
+
+```text
+discover cgroup v2 mount and current cgroup
+create manager_<pid>
+move judge process to manager cgroup
+enable memory+pids in subtree_control
+create run_<pid>_<counter>
+write memory.max / memory.swap.max / pids.max
+fork nsjail process
+join nsjail process to run cgroup
+release child barrier
+monitor wall clock and output file size
+read memory.events and memory.peak
+classify verdict
+kill and remove run cgroup
+```
+
+## Known gaps
+
+### 1. Delegated environment
+
+Current ordinary SSH sessions do not have cgroup write permission. The project needs a repeatable delegated runner entry.
+
+Recommended next artifact:
 
 ```bash
-bash scripts/preview_nsjail_cgroup_args.sh [memory_limit_mb] [pids_limit] [cpu_ms_per_sec]
+scripts/run_delegated_nsjail_tests.sh
 ```
 
-The script prints the nsjail cgroup arguments that a future runner integration
-would add, for example:
+It should launch tests under systemd with `Delegate=memory pids`, then run:
 
-```text
---use_cgroupv2
---cgroupv2_mount /sys/fs/cgroup
---cgroup_mem_max <memory_limit_bytes>
---cgroup_pids_max <pids_limit>
---cgroup_cpu_ms_per_sec <cpu_ms_per_sec>
+```bash
+bash scripts/run_all_tests.sh nsjail
+bash scripts/run_all_tests.sh security
 ```
 
-This is intentionally a preview only:
+### 2. Fixed rootfs
 
-- it does not execute nsjail;
-- it does not modify `runner.cpp`;
-- it does not require cgroup write access to succeed;
-- it keeps the current rlimit fallback as the actual runner behavior.
+Current runtime root is constructed per run and relies on host dynamic library paths. Current compile sandbox mounts broad host toolchain paths.
 
-The dry-run step is useful for reviewing parameter shape and deployment
-assumptions before cgroup v2 is wired into `run_program_nsjail(...)`.
+Product target:
 
-## 1. Background / 背景说明
+- versioned runtime rootfs;
+- versioned compile rootfs;
+- rootfs manifest;
+- `rootfs_version` in `judge_log.json`;
+- integrity check in `cppjudge doctor`.
 
-CPPJUDGE currently uses the `builtin` runner as its default runner backend. The
-builtin runner is a basic local sandbox wrapper. It already supports:
+### 3. Seccomp policy
 
-- time limits
-- memory limits
-- output limits
-- stdin/stdout/stderr redirection
-- process-group cleanup with `SIGKILL`
-- selected `rlimit` protections
+Current policy is a deny-list with `DEFAULT ALLOW`.
 
-However, the builtin runner is not a product-grade security sandbox. It does
-not provide:
+Product target:
 
-- Linux namespace isolation
-- cgroup isolation
-- seccomp syscall filtering
-- chroot / pivot_root filesystem isolation
-- network namespace isolation
-- dedicated low-privilege user isolation
+- observed syscall baseline for normal C++ submissions;
+- versioned allow-list policy;
+- compatibility tests for C++ I/O, exceptions, signals, TLE, MLE, OLE, CE;
+- clear policy version in logs.
 
-nsjail is planned as a future backend to improve process, filesystem, network,
-and resource isolation for running untrusted submissions.
+### 4. Low-privilege identity
 
----
+Current plan still needs a stable UID/GID model.
 
-## 2. nsjail Runner Goals / nsjail runner 目标
+Product target:
 
-The future `run_program_nsjail(...)` should preserve the public runner contract
-and eventually provide the following behavior:
+- dedicated judge service user;
+- explicit nsjail UID/GID mapping;
+- no accidental root execution for untrusted code;
+- file ownership and permissions documented.
 
-- run the compiled user program from `executable_file`
-- read stdin from `input_file`
-- write stdout to `output_file`
-- write stderr to `output_file + .err`
-- apply `time_limit_ms`
-- apply `memory_limit_mb`
-- apply `output_limit_mb`
-- disable networking by default unless explicitly enabled
-- limit the number of user-created processes
-- restrict the visible filesystem to required paths only
-- return `RunInfo` with:
-  - `RunResult`
-  - `time_ms`
-  - `memory_mb`
+### 5. Operational diagnostics
 
-The judge layer should continue to decide final verdicts such as AC, WA, RE,
-TLE, MLE, OLE, and System Error.
+Current scripts are useful but scattered.
 
----
+Product target:
 
-## 3. Directory Model / 目录模型
-
-CPPJUDGE already creates an isolated run directory for each judge run:
-
-```text
-build/runs/<run_id>/
-  solution
-  compile_error.txt
-  judge_log.json
-  user_output/
+```bash
+cppjudge doctor
+cppjudge doctor --verbose
 ```
 
-For nsjail execution, only the minimum required paths should be mounted into the
-jail:
+Doctor should check:
 
-- the directory containing `executable_file`
-- the directory containing `input_file`, mounted read-only
-- the per-run `user_output` directory, mounted writable
-- required system library directories, mounted read-only
+- nsjail presence and version;
+- cgroup v2 mount and controllers;
+- delegated write permission;
+- seccomp policy file and version;
+- rootfs manifest;
+- writable build/run directories;
+- low-privilege user model.
 
-The goal is for the user program to see only what it needs to execute and write
-its declared outputs.
+## Next development order
 
----
-
-## 4. stdin/stdout/stderr Design
-
-The runner should preserve the current I/O behavior:
-
-- stdin reads from `input_file`
-- stdout writes to `output_file`
-- stderr writes to `output_file + .err`
-
-stdout is used by the comparer for AC/WA decisions. stderr is not compared
-against the answer; it is kept for debugging RE/MLE/OLE/System Error cases.
-
-The implementation can either redirect file descriptors before `execvp(nsjail,
-...)` or configure nsjail to handle the same redirection. The final behavior
-must match the builtin runner.
-
----
-
-## 5. Filesystem Isolation Design
-
-Future nsjail support will likely need global judge-level configuration such as:
-
-- `sandbox_root`
-- `sandbox_work_dir`
-- `readonly_paths`
-- `writable_paths`
-
-These values are environment and deployment dependent, so they fit better in a
-global judge configuration file than in `problem.json`.
-
-`problem.json` should stay problem-focused. It is appropriate for:
-
-- time and memory limits
-- output limit
-- compare mode
-- floating-point epsilon
-- `sandbox_type`
-
-It should not directly own host mount policies or global filesystem isolation
-rules.
-
----
-
-## 6. Network Isolation Design
-
-Networking should be disabled by default:
-
-```text
-enable_network = false
-```
-
-Online judge submissions should not be able to access the network unless a
-future trusted/internal use case explicitly enables it. The normal public OJ
-case should keep network access off.
-
----
-
-## 7. Resource Limit Design
-
-Resource limits should map from CPPJUDGE config to nsjail/cgroup/rlimit behavior:
-
-- `time_limit_ms`: mapped to nsjail wall-time or time-limit parameters, with the
-  judge still recording elapsed time.
-- `memory_limit_mb`: eventually enforced by nsjail with cgroup support or an
-  equivalent memory limit mechanism.
-- `output_limit_mb`: can continue to use `RLIMIT_FSIZE`, an outer file-size
-  check, or both.
-- `max_processes`: should limit fork-heavy programs and fork-bomb attempts.
-
-The builtin runner millisecond monitoring and `/proc` memory checks are useful
-for local testing. The nsjail backend should eventually prefer stronger kernel
-isolation primitives where available.
-
----
-
-## 8. Error Classification / 错误分类
-
-The nsjail backend should preserve CPPJUDGE verdict semantics:
-
-- User program exits normally but output differs: WA, handled by the comparer.
-- User program exits non-zero or crashes: RE.
-- User program exceeds time limit: TLE.
-- User program exceeds memory limit: MLE.
-- User program writes too much output: OLE.
-- nsjail fails to start: System Error.
-- nsjail config is invalid: System Error.
-- nsjail is missing or not executable: System Error.
-- input/output mount setup fails: System Error.
-
-The key distinction is user failure versus judge/sandbox/environment failure.
-User-program failures should become Runtime Error where appropriate. Sandbox
-startup, configuration, and mount failures should become System Error.
-
----
-
-## 9. Future run_program_nsjail(...) Flow
-
-Pseudo-code for the future implementation:
-
-```text
-RunInfo run_program_nsjail(...) {
-    args = build_nsjail_args(...)
-
-    start timer
-    pid = fork()
-
-    child:
-        prepare stdin/stdout/stderr redirection if needed
-        execvp(nsjail, args)
-        write Failed to execute nsjail to stderr file if exec fails
-        _exit(1)
-
-    parent:
-        wait for nsjail process
-        collect exit status
-        read/parse nsjail logs if needed
-        inspect output size if needed
-        classify result as OK / RE / TLE / MLE / OLE / SE
-        return RunInfo(result, time_ms, memory_mb)
-}
-```
-
-The initial implementation should be conservative. If nsjail itself cannot be
-started or configured, the judge should return System Error rather than Runtime
-Error.
-
----
-
-## 10. build_nsjail_args(...) Design
-
-A first implementation step should be a pure argument builder:
-
-```cpp
-std::vector<std::string> build_nsjail_args(...);
-```
-
-Phase 1 of code work should generate nsjail arguments without executing nsjail.
-That makes it possible to test command generation with normal unit/dry-run
-tests before any real sandbox execution is attempted.
-
-The argument builder should describe:
-
-- executable path inside the jail
-- working directory
-- read-only mounts
-- writable mounts
-- stdin/stdout/stderr handling
-- time limit
-- memory limit strategy
-- process limit
-- network enabled/disabled mode
-
-This keeps the future `run_program_nsjail(...)` smaller and easier to review.
-
----
-
-## 11. Test Plan / 测试计划
-
-Future nsjail tests should include:
-
-- normal AC submission
-- stderr output capture
-- access `/etc/passwd`, expected to fail or be isolated
-- write to an illegal path, expected to fail
-- network access, expected to fail by default
-- fork bomb, expected to be limited
-- TLE
-- MLE
-- OLE
-
-These tests should initially live outside the default CI path until the nsjail
-runtime dependency is available and stable in CI.
-
----
-
-## 12. Roadmap
-
-- Phase 1: `docs/nsjail-plan.md` initial design. Done.
-- Phase 2: `build_nsjail_args(...)` MVP argument builder. Done.
-- Phase 3: real `run_program_nsjail(...)` MVP execution. Done.
-- Phase 4: per-run filesystem isolation, network isolation tests, and basic
-  rlimit coverage. Done.
-- Phase 5: cgroup v2 environment precheck. Done.
-- Phase 6: cgroup v2 dry-run argument design and tests. Done.
-- Phase 7: real cgroup v2 memory and pids integration where the deployment
-  environment supports it.
-- Phase 8: seccomp whitelist, managed minimal rootfs, and production deployment
-  hardening.
+1. Commit current documentation refresh.
+2. Confirm merge strategy for `stage3d-rootfs`.
+3. Create a delegated nsjail test entry.
+4. Run nsjail/security/seccomp tests without skipped cases.
+5. Add fixed runtime rootfs.
+6. Tighten seccomp from deny-list toward allow-list.
+7. Define low-privilege identity and install docs.
+8. Add doctor and stable schemas.

@@ -103,11 +103,20 @@ main() → judge(argc, argv)
 
 ## 开发约束
 
-- 不执行 `sudo`、`git reset --hard`、`git push --force`
+ - 不执行 `sudo`、`git reset --hard`、`git push --force`
 - 不安装/卸载系统软件
 - 不修改系统网络、mount、namespace 或 cgroup 配置
 - 修改前必须理解声明、实现、调用方和测试
 - 所有修改后必须: 构建 → 运行原有测试 → 运行相关新测试 → git diff
-- 不自动 commit，不 push
+ - 默认不自动 commit、不 push；只有用户明确要求仓库维护、发布、合并或分支清理时，才在确认的范围内执行
+ - 删除远端分支、合并到主线、推送到 GitHub 前必须确认目标分支和待删除分支清单
 - 保持 C++17，构建零 warning
 - 保持现有 CLI、problem.json 和 verdict 文本兼容
+
+## 当前项目状态提示
+
+- 当前最新开发状态在 VM 的 `stage3d-rootfs`，HEAD 为 `7e69963`。
+- GitHub `master` 仍落后该分支；`stage3d-rootfs` 尚未作为 GitHub 分支存在。
+- `docs/OVERVIEW.md` 是从 2026-06-20 起的项目大纲。
+- `docs/product-readiness-audit.md` 记录距离产品级判题器的主要差距。
+- nsjail/cgroup/seccomp 代码已接入，但当前普通 SSH 会话缺少 cgroup delegation，nsjail/security/seccomp 测试可能 skipped；不要把 skipped 当成 PASS。

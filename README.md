@@ -148,7 +148,7 @@ problems/A+B/
 CPPJUDGE 当前暴露三个沙箱后端名称：
 
 - `builtin`: 已实现，默认用于本地开发和 CI 回归测试
-- `nsjail`: MVP 版本已实现，需要系统安装外部 `nsjail` 可执行文件
+ - `nsjail`: 已实现编译/运行路径，并接入 cgroup v2 与 seccomp；需要系统安装外部 `nsjail`，且产品路径需要 delegated cgroup 环境
 - `isolate`: 预留后端，尚未实现
 
 `builtin` 是默认路径，也仍然是 GitHub Actions 默认回归测试使用的路径。它适合本地开发、课程演示和可信环境调试，但不能作为产品级安全沙箱。
@@ -158,13 +158,13 @@ CPPJUDGE 当前暴露三个沙箱后端名称：
 - 编译阶段：把用户源码复制到每次运行目录中的 `submission.cpp`，通过 `nsjail` 调用 `/usr/bin/g++` 编译出 `solution`。
 - 运行阶段：把编译出的 `solution` 只读挂载进运行沙箱，再按测试点运行。
 
-运行阶段的 nsjail MVP 使用每次运行独立的 `sandbox_root`，而不是把宿主机根目录暴露给 jail。它只读挂载编译后的 `solution`、读写挂载本次运行的 `user_output` 目录，并只读挂载普通 C++ 动态链接所需的一小组库文件。同时，运行沙箱内禁用了 procfs。
+运行阶段的 nsjail 路径使用每次运行独立的 `sandbox_root`，而不是把宿主机根目录暴露给 jail。它只读挂载编译后的 `solution`、读写挂载本次运行的 `user_output` 目录，并只读挂载普通 C++ 动态链接所需的一小组库文件。同时，运行沙箱内禁用了 procfs。
 
 当前 nsjail 的动态库挂载仍然是面向 C++ 的最小集合，足够覆盖现有回归测试，但还不是通用依赖方案。后续如果支持更多语言或更复杂的 C++ 依赖，需要做依赖扫描，或者维护一个受控的最小 rootfs。
 
-nsjail 后端目前施加基础 rlimit，包括地址空间、输出文件大小、core dump、CPU 时间、打开文件数和进程数。内存限制主要依赖 `RLIMIT_AS`，带有少量动态链接器启动余量。更精确的 MLE 仍然需要接入 cgroup v2。
+nsjail 后端目前施加基础 rlimit，并已接入 cgroup v2 生命周期：运行前创建 run cgroup，写入 `memory.max`、`pids.max`，通过 `memory.events` 辅助可信 MLE 分类，并在超限或清理时使用 `cgroup.kill`。这些能力需要运行环境授予 cgroup delegation；普通 SSH 会话可能只能跳过相关测试。
 
-当前 nsjail 仍然不是最终产品级沙箱配置：还缺完整最小 rootfs、seccomp 策略、cgroup 内存强约束，以及明确的低权限用户映射。`isolate` 仍然只是占位后端，会返回 `System Error`。
+当前 nsjail 仍然不是最终产品级沙箱配置：还缺完整最小 rootfs、seccomp allow-list、可重复的 delegated 测试入口，以及明确的低权限用户映射。`isolate` 仍然只是占位后端，会返回 `System Error`。
 
 `builtin` runner 提供基础本地执行包装：
 
@@ -241,7 +241,7 @@ builtin 安全测试会覆盖打开文件数限制、进程数行为、core dump
 
 ## nsjail / cgroup 环境检查
 
-在把 cgroup v2 参数真正接入 nsjail runner 之前，应先检查目标机器：
+在使用 nsjail/cgroup 产品路径之前，应先检查目标机器：
 
 ```bash
 bash scripts/check_nsjail_env.sh
@@ -255,15 +255,15 @@ bash scripts/check_nsjail_env.sh
 - 当前进程所在的 cgroup 路径
 - 当前用户是否能在 `/sys/fs/cgroup` 下创建子 cgroup
 
-这个脚本只用于诊断。它不会改变判题行为，也不是必需 CI 检查。cgroup 检查失败不会让普通判题失败。如果 cgroup v2 不可用，nsjail runner 会继续使用当前 rlimit 兜底方案。未来只有在目标机器通过相关预检查后，才应启用 cgroup 内存和进程数强约束。
+这个脚本只用于诊断。它不会改变判题行为，也不是必需 CI 检查。当前 nsjail 生产路径会 fail closed：如果缺少 delegated cgroup 或 seccomp policy，nsjail 判题应返回 `System Error`，而不是静默退回不安全模式。
 
-预览未来 nsjail cgroup 参数可以运行：
+预览 nsjail cgroup 参数可以运行：
 
 ```bash
 bash scripts/preview_nsjail_cgroup_args.sh 128 16 0
 ```
 
-该 dry-run 脚本只打印类似 `--use_cgroupv2`、`--cgroup_mem_max`、`--cgroup_pids_max` 的参数，不会执行 nsjail，也不会改变当前 runner 行为。
+该 dry-run 脚本只打印类似 `--use_cgroupv2`、`--cgroup_mem_max`、`--cgroup_pids_max` 的参数，不会执行 nsjail，也不会改变当前 runner 行为。真实验证应使用 delegated systemd/service 环境运行 nsjail 与 security profile。
 
 ---
 
@@ -276,9 +276,11 @@ bash scripts/preview_nsjail_cgroup_args.sh 128 16 0
 - 拒绝 `builtin`，因为它不是真正的安全沙箱。
 - 拒绝 `isolate`，直到该后端真正实现。
 - 使用 `nsjail` 前必须能在 `PATH` 中找到 nsjail。
+- nsjail 生产路径需要 cgroup v2 memory/pids delegation。
+- nsjail 生产路径需要可读的 seccomp policy。
 - 当 `sandbox_type=nsjail` 时，编译阶段也会通过 nsjail 执行，源码会先复制到本次运行目录。
 
-生产模式本身不会把当前 nsjail MVP 变成产品级沙箱；它的作用是防止生产路径意外退回不安全或缺失的沙箱后端。
+生产模式本身不会把当前 nsjail 路径变成产品级沙箱；它的作用是防止生产路径意外退回不安全或缺失的沙箱后端。是否达到产品级，还取决于 delegated nsjail/security/seccomp 测试是否真实运行并通过。
 
 ---
 

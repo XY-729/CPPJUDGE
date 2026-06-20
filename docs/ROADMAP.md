@@ -1,5 +1,7 @@
 # CPPJUDGE Roadmap
 
+> 2026-06-20 状态说明：本文保留为详细路线图和历史规划背景。当前事实快照以 `PROGRESS.md`、`docs/OVERVIEW.md` 和 `LAST_TASK_REPORT.md` 为准。cgroup v2 与 seccomp 接入代码已经存在，但 delegated nsjail/security/seccomp 全量测试在当前 SSH 会话中未验证，因为缺少 cgroup write permission。
+
 ## 1. 总体目标
 
 CPPJUDGE 的长期目标是成为一个适合学校或实验室可信环境使用的 C++ 判题后端。1.0 版本的完成标准是：

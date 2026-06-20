@@ -1,63 +1,81 @@
-# Current Task: Stage 3A — cgroup v2 Memory and Process Control
+# Current Task: Repository Audit, Documentation Refresh, and Branch Cleanup Plan
 
-**TASK_ID**: STAGE-3A-CGROUP-V2
-**STATUS**: PLANNED
-**SOURCE_EDIT_AUTHORIZATION**: ALLOWED
-**TEST_EDIT_AUTHORIZATION**: ALLOWED
+**TASK_ID**: REPO-AUDIT-DOC-REFRESH-2026-06-20
+
+**STATUS**: IN_PROGRESS
+
+**SOURCE_EDIT_AUTHORIZATION**: DOCS_ONLY
+
+**TEST_EDIT_AUTHORIZATION**: READ_ONLY
+
 **DOC_EDIT_AUTHORIZATION**: ALLOWED
-**GIT_WRITE_AUTHORIZATION**: ALLOWED
 
-**PREVIOUS_STATE**: AWAITING_STAGE_3_TASK
-**NEXT_STATE**: (defined by task outcome)
+**GIT_WRITE_AUTHORIZATION**: CONFIRM_BEFORE_BRANCH_DELETE_OR_MERGE
 
-## Summary
+## Objective
 
-Design and implement per-run cgroup v2 lifecycle in the nsjail runner,
-replacing current stderr-based MLE/TLE/OLE classification with trusted
-kernel metrics.
+Audit the current CPPJUDGE project state, identify gaps between the current implementation and a product-grade judge, refresh stale project progress documentation, replace `docs/OVERVIEW.md` with a forward-looking project outline, inspect Claude/prompt control files, and prepare a safe branch cleanup / merge plan.
 
-## Goals
+## Current Findings
 
-1. Investigate current nsjail and builtin resource limiting and process cleanup paths.
-2. Design a per-run cgroup v2 lifecycle (create before run, cleanup after).
-3. Use `memory.max` to enforce hard memory limit.
-4. Use `memory.peak` to record peak memory usage.
-5. Use `memory.events` (`oom` / `oom_kill` counters) to reliably detect MLE.
-6. Use `pids.max` to limit total process and thread count.
-7. Use `cgroup.kill` to clean up residual processes on timeout/limit.
-8. Fail closed with structured SE when required controllers or permissions are absent.
-9. Remove stderr-based MLE classification from nsjail runner.
-10. Preserve existing test baselines; add cgroup regression and attack tests.
+- Current VM branch: `stage3d-rootfs`.
+- Current VM HEAD: `7e69963 feat: enforce seccomp policy in nsjail sandbox`.
+- GitHub `master` is behind the VM branch.
+- GitHub `codex/judge-architecture-tests` is already contained in GitHub `master`.
+- GitHub `claudeworker` and `stage2-testing` are contained in VM `stage3d-rootfs`, but not yet in GitHub `master`.
+- `stage3d-rootfs` exists on the VM/local clone but is not present as a GitHub branch.
 
-## Boundaries
-
-- Prioritize design, environment probing, and a minimal closed loop.
-- Do NOT simultaneously work on seccomp, fixed rootfs, CLI refactoring, or multi-worker.
-- Do NOT use `system()`.
-- Do NOT introduce unsafe fork patterns in multi-threaded processes.
-- Do NOT silently fall back to unsafe modes when cgroup is unavailable.
-- Environment checks that fail should return structured SE, not degrade silently.
-
-## Suggested Files to Review
-
-```
-src/runner.cpp
-src/judge.cpp
-src/config.h
-include/
-tests/
-scripts/run_nsjail_tests.sh
-scripts/run_security_tests.sh
-docs/nsjail-plan.md
-docs/security-test-matrix.md
-```
-
-## Baseline Tests
+## Verification Performed
 
 ```bash
+bash scripts/check_nsjail_env.sh
 bash scripts/run_all_tests.sh portable
 bash scripts/run_all_tests.sh nsjail
 bash scripts/run_all_tests.sh security
 ```
 
-Actual commands are defined in `docs/TESTING.md` and the test scripts themselves.
+Confirmed:
+
+- portable profile: PASS, 12/12 tests passed.
+- builtin security regression: PASS.
+- nsjail/security/seccomp tests: NOT_VERIFIED in current SSH session because cgroup delegation is unavailable and those tests were skipped.
+- cgroup v2 and nsjail flags exist, but current user cannot create child cgroups under `/sys/fs/cgroup`.
+
+## Scope Boundaries
+
+Allowed now:
+
+- Update docs and progress reports.
+- Add product readiness audit documentation.
+- Inspect local/remote branches and compute ancestry.
+- Prepare exact branch deletion and merge recommendations.
+
+Requires confirmation before execution:
+
+- Delete GitHub branches.
+- Push to GitHub.
+- Merge current development branch into `master`.
+- Remove local VM branches.
+- Delete ignored build artifacts from the VM.
+
+## Files to Keep Current
+
+- `docs/OVERVIEW.md`
+- `docs/product-readiness-audit.md`
+- `PROGRESS.md`
+- `LAST_TASK_REPORT.md`
+- `CLAUDE.md`
+- `.claude/rules/documentation.md`
+
+## Recommended Next Decision
+
+Confirm one of the following merge paths:
+
+1. Directly merge `stage3d-rootfs` into `master` and push `master`.
+2. Push a temporary GitHub branch from `stage3d-rootfs`, open/inspect a PR, then merge.
+
+After the merge target is confirmed, obsolete branches can be deleted in this order:
+
+1. `codex/judge-architecture-tests`
+2. `claudeworker`
+3. `stage2-testing`
