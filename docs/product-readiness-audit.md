@@ -201,4 +201,3 @@ CPPJUDGE 可以开始考虑 1.0 前，建议至少满足：
 - `cppjudge doctor` 可诊断运行环境；
 - `problem.json` 和 `judge_log.json` schema 文档稳定；
 - 安装、部署、安全、排错文档齐备。
-
