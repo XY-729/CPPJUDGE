@@ -76,22 +76,50 @@ run_security_case() {
         fail "${name} -> cppjudge timed out"
     fi
 
-    if [[ "$status" -ne 0 ]]; then
-        fail "${name} -> cppjudge exited with status ${status}"
+    if [[ "$status" -eq 2 ]]; then
+        fail "${name} -> cppjudge CLI/doctor exit status ${status}"
+    fi
+
+    if [[ "$status" -ne 0 && "$status" -ne 1 && "$status" -ne 3 ]]; then
+        fail "${name} -> unexpected cppjudge exit status ${status}"
     fi
 
     check_common_log "$name"
 
     local verdict
     verdict="$(latest_field final_verdict)"
+
+    local verdict_allowed=false
     for allowed in "${allowed_verdicts[@]}"; do
         if [[ "$verdict" == "$allowed" ]]; then
-            printf '[PASS] %-18s -> %s\n' "$name" "$verdict"
-            return
+            verdict_allowed=true
+            break
         fi
     done
 
-    fail "${name} -> unexpected verdict: ${verdict}"
+    if ! $verdict_allowed; then
+        fail "${name} -> unexpected verdict: ${verdict}"
+    fi
+
+    case "$verdict" in
+        "Accepted")
+            if [[ "$status" -ne 0 ]]; then
+                fail "${name} -> Accepted verdict should exit 0, got ${status}"
+            fi
+            ;;
+        "System Error")
+            if [[ "$status" -ne 3 ]]; then
+                fail "${name} -> System Error verdict should exit 3, got ${status}"
+            fi
+            ;;
+        *)
+            if [[ "$status" -ne 1 ]]; then
+                fail "${name} -> non-Accepted verdict should exit 1, got ${status}"
+            fi
+            ;;
+    esac
+
+    printf '[PASS] %-18s -> %s (exit %s)\n' "$name" "$verdict" "$status"
 }
 
 run_open_many_files_test() {

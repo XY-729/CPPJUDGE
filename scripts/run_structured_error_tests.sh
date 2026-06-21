@@ -14,6 +14,7 @@ SOLUTION_BAK=$(mktemp)
 PROBLEM_JSON_BAK=$(mktemp)
 cp submissions/solution.cpp "$SOLUTION_BAK"
 cp problems/A+B/problem.json "$PROBLEM_JSON_BAK"
+SOLUTION_HASH_BEFORE="$(sha256sum submissions/solution.cpp | awk '{print $1}')"
 
 restore_repo_files() {
     cp "$SOLUTION_BAK" submissions/solution.cpp 2>/dev/null || true
@@ -274,11 +275,16 @@ fi
 # ════════════════════════════════════════════════════════════
 echo "=== Test 11: repo files unchanged ==="
 restore_repo_files
-if git diff --exit-code -- submissions/solution.cpp problems/A+B/problem.json >/dev/null 2>&1; then
-    pass "Test11 -> repo files unchanged"
+SOLUTION_HASH_AFTER="$(sha256sum submissions/solution.cpp | awk '{print $1}')"
+if [[ "$SOLUTION_HASH_AFTER" == "$SOLUTION_HASH_BEFORE" ]] &&
+   git diff --exit-code -- problems/A+B/problem.json >/dev/null 2>&1; then
+    pass "Test11 -> repo files unchanged during test"
 else
-    fail "Test11 -> repo files modified!"
-    git diff -- submissions/solution.cpp problems/A+B/problem.json
+    fail "Test11 -> repo files modified during test!"
+    if [[ "$SOLUTION_HASH_AFTER" != "$SOLUTION_HASH_BEFORE" ]]; then
+        echo "submissions/solution.cpp hash changed during test"
+    fi
+    git diff -- problems/A+B/problem.json
 fi
 
 # ── Summary ────────────────────────────────────────────────

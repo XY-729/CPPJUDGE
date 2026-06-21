@@ -1,3 +1,3 @@
 #pragma once
 
-void judge(int argc, char* argv[]);
+int judge(int argc, char* argv[]);

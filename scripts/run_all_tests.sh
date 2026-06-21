@@ -149,19 +149,25 @@ fi
 
 # ── Guard: track repo test data ────────────────────────────
 echo "=== Checking repo test data integrity ==="
-if git diff --quiet -- problems submissions; then
-    echo "  test data unchanged before run"
+GUARD_PATHS=(problems submissions/tests)
+SOLUTION_HASH_BEFORE=""
+if [[ -f submissions/solution.cpp ]]; then
+    SOLUTION_HASH_BEFORE="$(sha256sum submissions/solution.cpp | awk '{print $1}')"
+fi
+
+if git diff --quiet -- "${GUARD_PATHS[@]}"; then
+    echo "  problem data and submission fixtures unchanged before run"
 else
-    echo "ERROR: tracked test data already differs before test run" >&2
-    git diff -- problems submissions
+    echo "ERROR: tracked problem data or submission fixtures already differ before test run" >&2
+    git diff -- "${GUARD_PATHS[@]}"
     exit 1
 fi
 
-if git diff --cached --quiet -- problems submissions; then
+if git diff --cached --quiet -- "${GUARD_PATHS[@]}"; then
     :
 else
-    echo "ERROR: staged test data already differs before test run" >&2
-    git diff --cached -- problems submissions
+    echo "ERROR: staged problem data or submission fixtures already differ before test run" >&2
+    git diff --cached -- "${GUARD_PATHS[@]}"
     exit 1
 fi
 echo ""
@@ -214,11 +220,21 @@ done
 # ── Post-run: verify test data unchanged ───────────────────
 echo ""
 echo "=== Post-run repo check ==="
-if git diff --exit-code -- problems submissions; then
-    echo "  test data unchanged after run"
+if git diff --exit-code -- "${GUARD_PATHS[@]}"; then
+    echo "  problem data and submission fixtures unchanged after run"
 else
-    echo "ERROR: tracked test data was modified during test run"
+    echo "ERROR: tracked problem data or submission fixtures were modified during test run"
     OVERALL_RC=1
+fi
+
+if [[ -n "$SOLUTION_HASH_BEFORE" && -f submissions/solution.cpp ]]; then
+    SOLUTION_HASH_AFTER="$(sha256sum submissions/solution.cpp | awk '{print $1}')"
+    if [[ "$SOLUTION_HASH_AFTER" == "$SOLUTION_HASH_BEFORE" ]]; then
+        echo "  submissions/solution.cpp unchanged during run"
+    else
+        echo "ERROR: submissions/solution.cpp was modified during test run"
+        OVERALL_RC=1
+    fi
 fi
 
 # ── Summary ────────────────────────────────────────────────

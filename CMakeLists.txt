@@ -5,9 +5,29 @@ project(cppjudge)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CPPJUDGE_VERSION "0.1.0-dev" CACHE STRING "CPPJUDGE version")
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CPPJUDGE_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT CPPJUDGE_GIT_COMMIT)
+    set(CPPJUDGE_GIT_COMMIT "unknown")
+endif()
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h
+    @ONLY
+)
+
+
 # ── Library target (all sources except main) ──────────────
 add_library(cppjudge_lib STATIC
     src/judge.cpp
+    src/cli.cpp
     src/compiler.cpp
     src/runner.cpp
     src/comparer.cpp
@@ -18,6 +38,7 @@ add_library(cppjudge_lib STATIC
 target_include_directories(cppjudge_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 # ── Main executable ───────────────────────────────────────
@@ -73,6 +94,9 @@ endfunction()
 
 add_cppjudge_integration_test(test_integration_builtin tests/integration/test_builtin_verdicts.sh)
 add_cppjudge_integration_test(test_integration_illegal_config tests/integration/test_illegal_config.sh)
+add_cppjudge_integration_test(test_user_facing_cli tests/cli/test_user_facing_cli.sh)
+add_cppjudge_integration_test(test_version_and_doctor tests/cli/test_version_and_doctor.sh)
+add_cppjudge_integration_test(test_quickstart_example tests/cli/test_quickstart_example.sh)
 
 if(NSJAIL_EXECUTABLE)
     add_cppjudge_integration_test(test_integration_nsjail tests/integration/test_nsjail_verdicts.sh)
@@ -102,6 +126,7 @@ endfunction()
 add_cppjudge_regression_test(test_regression_default scripts/run_tests.sh)
 add_cppjudge_regression_test(test_regression_security scripts/run_security_tests.sh)
 add_cppjudge_regression_test(test_regression_structured_error scripts/run_structured_error_tests.sh)
+add_cppjudge_regression_test(test_regression_judge_log_schema tests/regression/test_judge_log_schema.sh)
 
 set_tests_properties(test_regression_security PROPERTIES
     LABELS "regression;security;builtin"

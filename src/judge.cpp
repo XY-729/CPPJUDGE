@@ -1,9 +1,11 @@
 #include "judge.h"
 
+#include "cli.h"
 #include "compiler.h"
 #include "comparer.h"
 #include "config.h"
 #include "runner.h"
+#include "version.h"
 
 #include <algorithm>
 #include <chrono>
@@ -345,6 +347,29 @@ static std::string make_run_id() {
     return ss.str();
 }
 
+static void add_log_metadata(
+    json& log_json,
+    const std::string& cli_mode,
+    const std::string& submission_file
+) {
+    log_json["schema_version"] = CPPJUDGE_SCHEMA_VERSION;
+    log_json["tool"] = "cppjudge";
+    log_json["cppjudge_version"] = CPPJUDGE_VERSION;
+    log_json["git_commit"] = CPPJUDGE_GIT_COMMIT;
+    log_json["cli_mode"] = cli_mode;
+    log_json["submission_file"] = submission_file;
+}
+
+static int exit_code_for_verdict(FinalVerdict verdict) {
+    if (verdict == FinalVerdict::AC) {
+        return 0;
+    }
+    if (verdict == FinalVerdict::SE) {
+        return 3;
+    }
+    return 1;
+}
+
 static void write_log_file(
     const std::string& judge_log_file,
     const json& log_json
@@ -382,15 +407,31 @@ static bool parse_int_arg(
     }
 }
 
-void judge(int argc, char* argv[]) {
+int judge(int argc, char* argv[]) {
+    CliOptions cli_options = parse_cli(argc, argv);
+    if (cli_options.command == CliCommand::Version) {
+        return print_version();
+    }
+    if (cli_options.command == CliCommand::Doctor) {
+        return run_doctor();
+    }
+    if (cli_options.exit_requested) {
+        return cli_options.exit_code;
+    }
+
     std::string submission_file = SUBMISSION_FILE;
     std::string problem_dir = PROBLEM_DIR;
 
-    if (argc > 1) {
-        submission_file = argv[1];
-    }
-    if (argc > 2) {
-        problem_dir = argv[2];
+    if (cli_options.user_facing) {
+        submission_file = cli_options.submission_file;
+        problem_dir = cli_options.problem_dir;
+    } else {
+        if (argc > 1) {
+            submission_file = argv[1];
+        }
+        if (argc > 2) {
+            problem_dir = argv[2];
+        }
     }
 
     std::string problem_config_error;
@@ -398,30 +439,81 @@ void judge(int argc, char* argv[]) {
     ProblemConfig problem_config = load_problem_config(problem_dir, problem_config_error);
     bool production_mode = is_production_environment();
 
-    if (problem_config_error.empty() && argc > 3 && !parse_int_arg(
-        argv[3], "time_limit_ms", problem_config.time_limit_ms, argument_error
-    )) {}
+    if (cli_options.user_facing) {
+        if (problem_config_error.empty() && cli_options.time_limit_ms && !parse_int_arg(
+            cli_options.time_limit_ms->c_str(),
+            "time_limit_ms",
+            problem_config.time_limit_ms,
+            argument_error
+        )) {}
 
-    if (problem_config_error.empty() && argument_error.empty() && argc > 4 && !parse_int_arg(
-        argv[4], "memory_limit_mb", problem_config.memory_limit_mb, argument_error
-    )) {}
+        if (problem_config_error.empty() && argument_error.empty() &&
+            cli_options.memory_limit_mb && !parse_int_arg(
+                cli_options.memory_limit_mb->c_str(),
+                "memory_limit_mb",
+                problem_config.memory_limit_mb,
+                argument_error
+            )) {}
 
-    if (problem_config_error.empty() && argument_error.empty() && argc > 5 && !parse_int_arg(
-        argv[5], "output_limit_mb", problem_config.output_limit_mb, argument_error
-    )) {}
+        if (problem_config_error.empty() && argument_error.empty() &&
+            cli_options.output_limit_mb && !parse_int_arg(
+                cli_options.output_limit_mb->c_str(),
+                "output_limit_mb",
+                problem_config.output_limit_mb,
+                argument_error
+            )) {}
 
-    if (problem_config_error.empty() && argument_error.empty() && argc > 6) {
-        if (!is_valid_compare_mode(argv[6])) {
-            argument_error = "Invalid compare_mode: " + std::string(argv[6]) +
-                             ", expected exact or floating";
-        } else {
-            problem_config.compare_mode = compare_mode_from_string(argv[6]);
+        if (problem_config_error.empty() && argument_error.empty() && cli_options.compare_mode) {
+            if (!is_valid_compare_mode(*cli_options.compare_mode)) {
+                argument_error = "Invalid compare_mode: " + *cli_options.compare_mode +
+                                 ", expected exact or floating";
+            } else {
+                problem_config.compare_mode = compare_mode_from_string(*cli_options.compare_mode);
+            }
         }
-    }
 
-    if (problem_config_error.empty() && argument_error.empty() && argc > 7 && !parse_int_arg(
-        argv[7], "compile_time_limit_ms", problem_config.compile_time_limit_ms, argument_error
-    )) {}
+        if (problem_config_error.empty() && argument_error.empty() &&
+            cli_options.compile_time_limit_ms && !parse_int_arg(
+                cli_options.compile_time_limit_ms->c_str(),
+                "compile_time_limit_ms",
+                problem_config.compile_time_limit_ms,
+                argument_error
+            )) {}
+
+        if (problem_config_error.empty() && argument_error.empty() && cli_options.sandbox_type) {
+            if (!is_valid_sandbox_type(*cli_options.sandbox_type)) {
+                argument_error = "Invalid sandbox_type: " + *cli_options.sandbox_type +
+                                 ", expected builtin, nsjail, or isolate";
+            } else {
+                problem_config.sandbox_type = sandbox_type_from_string(*cli_options.sandbox_type);
+            }
+        }
+    } else {
+        if (problem_config_error.empty() && argc > 3 && !parse_int_arg(
+            argv[3], "time_limit_ms", problem_config.time_limit_ms, argument_error
+        )) {}
+
+        if (problem_config_error.empty() && argument_error.empty() && argc > 4 && !parse_int_arg(
+            argv[4], "memory_limit_mb", problem_config.memory_limit_mb, argument_error
+        )) {}
+
+        if (problem_config_error.empty() && argument_error.empty() && argc > 5 && !parse_int_arg(
+            argv[5], "output_limit_mb", problem_config.output_limit_mb, argument_error
+        )) {}
+
+        if (problem_config_error.empty() && argument_error.empty() && argc > 6) {
+            if (!is_valid_compare_mode(argv[6])) {
+                argument_error = "Invalid compare_mode: " + std::string(argv[6]) +
+                                 ", expected exact or floating";
+            } else {
+                problem_config.compare_mode = compare_mode_from_string(argv[6]);
+            }
+        }
+
+        if (problem_config_error.empty() && argument_error.empty() && argc > 7 && !parse_int_arg(
+            argv[7], "compile_time_limit_ms", problem_config.compile_time_limit_ms, argument_error
+        )) {}
+    }
 
     if (problem_config_error.empty() && argument_error.empty()) {
         validate_problem_config(problem_config, argument_error);
@@ -440,6 +532,7 @@ void judge(int argc, char* argv[]) {
     fs::create_directories(user_output_dir);
 
     json log_json;
+    add_log_metadata(log_json, cli_options.user_facing ? "judge" : "legacy", submission_file);
 
     log_json["submission"] = submission_file;
     log_json["run_id"] = run_id;
@@ -465,7 +558,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 3;
     }
 
     if (!argument_error.empty()) {
@@ -475,7 +568,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 2;
     }
 
     std::string sandbox_error;
@@ -486,7 +579,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 3;
     }
 
     if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
@@ -496,7 +589,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 3;
     }
 
     if (!fs::exists(output_dir) || !fs::is_directory(output_dir)) {
@@ -506,7 +599,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 3;
     }
 
     std::vector<fs::path> input_files;
@@ -524,7 +617,7 @@ void judge(int argc, char* argv[]) {
         log_json["passed"] = 0;
         log_json["total"] = 0;
         write_log_file(judge_log_file, log_json);
-        return;
+        return 3;
     }
 
     // Compile with structured result
@@ -551,7 +644,7 @@ void judge(int argc, char* argv[]) {
             log_json["total"] = input_files.size();
 
             write_log_file(judge_log_file, log_json);
-            return;
+            return 3;
         }
 
         std::cout << "\n========== Compile Error ==========" << std::endl;
@@ -563,7 +656,7 @@ void judge(int argc, char* argv[]) {
         log_json["total"] = input_files.size();
 
         write_log_file(judge_log_file, log_json);
-        return;
+        return 1;
     }
 
     int accepted = 0;
@@ -673,4 +766,5 @@ void judge(int argc, char* argv[]) {
               << " / "
               << input_files.size()
               << std::endl;
+    return exit_code_for_verdict(final_verdict);
 }

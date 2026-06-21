@@ -1,78 +1,86 @@
-# Current Task: Repository Audit, Documentation Refresh, and Branch Cleanup Plan
+# Current Task: Security harness exit-code compatibility
 
-**TASK_ID**: REPO-AUDIT-DOC-REFRESH-2026-06-20
+**TASK_ID**: CPPJUDGE_P1_SECURITY_HARNESS_EXIT_CODE_FIX_001
 
 **STATUS**: COMPLETE
 
-**SOURCE_EDIT_AUTHORIZATION**: DOCS_ONLY
+**MODE**: SMALL_TEST_HARNESS_FIX_WITH_VERIFICATION
 
-**TEST_EDIT_AUTHORIZATION**: READ_ONLY
+**SOURCE_EDIT_AUTHORIZATION**: TEST_HARNESS_ONLY
 
-**DOC_EDIT_AUTHORIZATION**: ALLOWED
+**TEST_EDIT_AUTHORIZATION**: ALLOWED
 
-**GIT_WRITE_AUTHORIZATION**: CONFIRM_BEFORE_BRANCH_DELETE_OR_MERGE
+**DOC_EDIT_AUTHORIZATION**: REPORTS_ONLY
+
+**GIT_WRITE_AUTHORIZATION**: NO_COMMIT_NO_PUSH
 
 ## Objective
 
-Audit the current CPPJUDGE project state, identify gaps between the current implementation and a product-grade judge, refresh stale project progress documentation, replace `docs/OVERVIEW.md` with a forward-looking project outline, inspect Claude/prompt control files, and prepare a safe branch cleanup / merge plan.
+Fix the security regression harness so it is compatible with P1 exit-code semantics:
 
-## Current Findings
+- Accepted verdict => exit 0
+- non-Accepted verdict => exit 1
+- CLI argument error / doctor NOT_READY or NOT_VERIFIED => exit 2
+- System Error / tool error => exit 3
 
-- Current VM branch: `master`.
-- Current VM/local/GitHub HEAD: `0330f43 docs: trim product audit markdown`.
-- GitHub `master` now contains the former VM `stage3d-rootfs` work.
-- GitHub obsolete branches `codex/judge-architecture-tests`, `claudeworker`, and `stage2-testing` have been deleted.
-- VM and Windows mirror local branches have been cleaned up to `master`; stale remote-tracking refs were removed.
+The fix must not change runner, cgroup, nsjail, seccomp, or CLI semantics.
+
+## Completion State
+
+Completed:
+
+1. Updated `scripts/run_security_tests.sh::run_security_case`.
+2. The harness now captures cppjudge exit status explicitly.
+3. The harness checks `judge_log.json` final_verdict against each case's allowed verdicts.
+4. Exit 1 is accepted only for verified non-Accepted verdicts.
+5. Exit 3 is accepted only for verified System Error verdicts.
+6. Exit 0 is required for Accepted verdicts.
+7. Exit 2 remains a failure for these security judge cases.
+8. No runner/cgroup/nsjail/seccomp/CLI implementation files were modified.
 
 ## Verification Performed
 
 ```bash
-bash scripts/check_nsjail_env.sh
+cmake -S . -B build
+cmake --build build -j2
 bash scripts/run_all_tests.sh portable
-bash scripts/run_all_tests.sh nsjail
-bash scripts/run_all_tests.sh security
+systemd-run --user --scope -p Delegate=yes bash scripts/run_all_tests.sh nsjail
+systemd-run --user --scope -p Delegate=yes bash scripts/run_all_tests.sh security
+./build/cppjudge --version
+./build/cppjudge doctor
+./build/cppjudge judge --problem problems/A+B --submission submissions/solution.cpp
+python3 -m json.tool build/judge_log.json >/tmp/cppjudge_log_check.json
+./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 exact 5000
 ```
 
 Confirmed:
 
-- portable profile: PASS, 12/12 tests passed.
-- builtin security regression: PASS.
-- nsjail/security/seccomp tests: NOT_VERIFIED in current SSH session because cgroup delegation is unavailable and those tests were skipped.
-- cgroup v2 and nsjail flags exist, but current user cannot create child cgroups under `/sys/fs/cgroup`.
+- BUILD: PASS
+- PORTABLE_TESTS: PASS, 16/16
+- DELEGATED_NSJAIL: PASS, 5/5
+- DELEGATED_SECURITY: PASS, 4/4
+- SECURITY_HARNESS_EXIT_CODE_FIX: PASS
+- CLI_SMOKE: PASS
+- JSON_VALID: PASS
+- NO_RUNNER_CGROUP_SECCOMP_CHANGE: PASS
+- EXCLUDED_SANDBOX_RULE_UNTOUCHED: PASS
 
 ## Scope Boundaries
 
-Allowed now:
+This task intentionally did not modify:
 
-- Update docs and progress reports.
-- Add product readiness audit documentation.
-- Inspect local/remote branches and compute ancestry.
-- Prepare exact branch deletion and merge recommendations.
+- `src/runner.cpp`
+- `src/runner.h`
+- `src/cgroup_v2.cpp`
+- `src/cgroup_v2.h`
+- `src/seccomp_config.cpp`
+- `src/seccomp_config.h`
+- `sandbox/seccomp/`
+- `src/cli.cpp`
+- `src/judge.cpp`
 
-Requires confirmation before execution:
+The existing `.claude/rules/sandbox.md` working-tree change was preserved and not modified.
 
-- Delete GitHub branches.
-- Push to GitHub.
-- Merge current development branch into `master`.
-- Remove local VM branches.
-- Delete ignored build artifacts from the VM.
+## Next Recommended Task
 
-## Files to Keep Current
-
-- `docs/OVERVIEW.md`
-- `docs/product-readiness-audit.md`
-- `PROGRESS.md`
-- `LAST_TASK_REPORT.md`
-- `CLAUDE.md`
-- `.claude/rules/documentation.md`
-
-## Completion State
-
-Completed repository-maintenance actions:
-
-1. Fast-forwarded GitHub `master` to `0330f43`.
-2. Deleted GitHub branches `codex/judge-architecture-tests`, `claudeworker`, and `stage2-testing`.
-3. Fast-forwarded VM `master` to `0330f43` and switched the VM working tree to `master`.
-4. Deleted merged VM/local development branches and stale tracking refs.
-
-Remaining product work is the Stage 4/P0 hardening track: delegated nsjail/security verification, fixed rootfs, seccomp allow-list, low-privilege mapping, and CLI/doctor/schema stabilization.
+`CPPJUDGE_P1_FINAL_COMMIT_REVIEW_001`: final diff review and proposed commit plan, still without git write operations unless explicitly approved.

@@ -1,93 +1,24 @@
 # CPPJUDGE
 
-CPPJUDGE 是一个轻量级 C++ 判题内核，适合本地学习、课程项目和可信实验环境使用。它可以编译一份 C++ 提交，把程序运行在题目测试数据上，施加基础资源限制，比较输出结果，并写出结构化的 `judge_log.json` 方便调试。
+CPPJUDGE 是一个面向 Linux 的单机 C++ 判题器。它会编译提交代码、自动运行题目目录中的测试点、执行资源限制、比较输出，并把完整结果写入 `build/judge_log.json`。
 
-当前项目仍然是教学导向、本地优先的判题原型。它的实际目标是逐步演进成适合学校或实验室可信环境使用的 C++ 判题后端。内置 runner 适合开发和实验，但不是产品级安全沙箱。
+产品级安全路径是 **nsjail + cgroup v2 + seccomp**。`builtin` runner 仅用于学习、实验和可信环境调试，不应作为运行不可信代码的安全边界。
 
----
+## Quick Start
 
-## 项目简介
-
-CPPJUDGE 是一个聚焦 C++ 语言的小型在线判题原型。目前支持：
-
-- 编译 C++17 提交
-- 对多个输入/输出测试点运行提交程序
-- 运行时间、内存、输出大小和编译时间限制
-- 精确比较和浮点误差比较
-- 每次评测独立的运行目录
-- 详细的 `judge_log.json` 日志
-
-当前设计目标是在保持核心判题流程简单的同时，为后续接入 `nsjail`、`isolate` 等沙箱后端做好结构准备。
-
----
-
-## 功能特性
-
-- Compile Error
-- Accepted / Wrong Answer
-- Time Limit Exceeded
-- Memory Limit Exceeded
-- Output Limit Exceeded
-- Runtime Error
-- System Error
-- `exact` / `floating` 比较模式
-- `sandbox_type`: `builtin` (自己写的残废版)/ `nsjail` (接了一半)/ `isolate`(还没搞)
-- JSON 判题日志
-- `build/runs/<run_id>/` 下的独立运行目录
-- `build/judge_log.json` 最新日志快捷路径
-
----
-
-## 构建
+### 1. 构建
 
 ```bash
-mkdir -p build
-cd build
-cmake ..
-make
+cmake -S . -B build
+cmake --build build -j2
 ```
 
-Rocky Linux / Fedora 上如果缺少基础构建工具，可以先安装：
+### 2. 添加题目
 
-```bash
-sudo dnf install gcc-c++ make cmake
-```
-
----
-
-## 使用方法
-
-```bash
-./build/cppjudge [submission_file] [problem_dir] [time_limit_ms] [memory_limit_mb] [output_limit_mb] [compare_mode] [compile_time_limit_ms]
-```
-
-参数说明：
-
-- `submission_file`: C++ 源码文件，默认 `submissions/solution.cpp`
-- `problem_dir`: 题目目录，默认 `problems/A+B`
-- `time_limit_ms`: 运行时间限制，单位毫秒，必须是正整数
-- `memory_limit_mb`: 内存限制，单位 MB，必须是正整数
-- `output_limit_mb`: 输出大小限制，单位 MB，必须是正整数
-- `compare_mode`: `exact`、`floating` 或 `float`
-- `compile_time_limit_ms`: 编译超时时间，单位毫秒，必须是正整数
-
-示例：
-
-```bash
-./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 floating 5000
-python3 -m json.tool build/judge_log.json
-```
-
-命令行参数会覆盖 `problem.json` 中对应的配置项。
-
----
-
-## 题目目录格式
-
-每个题目目录包含一个 `problem.json`，以及成对的输入/输出文件：
+建立如下目录：
 
 ```text
-problems/A+B/
+problems/<problem-name>/
   problem.json
   input/
     1.in
@@ -97,36 +28,169 @@ problems/A+B/
     2.out
 ```
 
-输入文件使用 `.in` 后缀。对于每个 `input/<case>.in`，CPPJUDGE 期望存在对应的 `output/<case>.out`。如果标准输出文件缺失，会判为 `System Error`，因为这表示题目数据不完整。
+`input/1.in` 对应 `output/1.out`，`input/2.in` 对应 `output/2.out`。每个 `.in` 文件都必须有同名 `.out`；缺少标准输出属于题目数据错误，评测结果为 `System Error`。
 
----
+### 3. 编写 problem.json
 
-## problem.json 示例
+题目的时间、内存、输出、编译、比较方式和沙箱限制都写在 `problem.json` 中。普通用户无需在命令行重复输入这些限制。
+
+学习/实验环境可以使用 builtin：
 
 ```json
 {
-    title: A+B,
-    time_limit_ms: 1000,
-    memory_limit_mb: 128,
-    output_limit_mb: 1,
-    compile_time_limit_ms: 5000,
-    compare_mode: floating,
-    float_abs_eps: 1e-6,
-    float_rel_eps: 1e-6,
-    sandbox_type: builtin
+  "title": "A+B",
+  "time_limit_ms": 1000,
+  "memory_limit_mb": 128,
+  "output_limit_mb": 1,
+  "compile_time_limit_ms": 5000,
+  "compare_mode": "exact",
+  "sandbox_type": "builtin"
 }
 ```
 
-支持的配置项：
+产品安全路径使用 nsjail，并要求宿主机正确配置 cgroup v2 delegation 和 seccomp：
 
-- `time_limit_ms`、`memory_limit_mb`、`output_limit_mb`、`compile_time_limit_ms`: 正整数
-- `compare_mode`: `exact`、`floating` 或 `float`
-- `float_abs_eps`、`float_rel_eps`: 非负数字
-- `sandbox_type`: `builtin`、`nsjail` 或 `isolate`
+```json
+{
+  "title": "A+B",
+  "time_limit_ms": 1000,
+  "memory_limit_mb": 128,
+  "output_limit_mb": 1,
+  "compile_time_limit_ms": 5000,
+  "compare_mode": "exact",
+  "sandbox_type": "nsjail"
+}
+```
 
-如果配置类型或取值不合法，会判为 `System Error`，并把错误信息写入 `judge_log.json` 的 `error` 字段。
+支持的字段：
 
----
+- `title`：题目名称。
+- `time_limit_ms`：单测试点时间限制，正整数，单位毫秒。
+- `memory_limit_mb`：内存限制，正整数，单位 MB。
+- `output_limit_mb`：输出限制，正整数，单位 MB。
+- `compile_time_limit_ms`：编译时间限制，正整数，单位毫秒。
+- `compare_mode`：`exact` 或 `floating`。
+- `sandbox_type`：`builtin`、`nsjail` 或尚未实现的 `isolate`。
+- `float_abs_eps`、`float_rel_eps`：浮点比较使用的非负误差，可选。
+
+### 4. 提交代码并判题
+
+普通用户只需提供题目目录和提交文件。仓库默认的 `submissions/solution.cpp` 是 A+B 的 Accepted 示例，因此第一条命令应稳定返回 `Accepted`：
+
+```bash
+./build/cppjudge judge --problem problems/A+B --submission submissions/solution.cpp
+```
+
+也可以使用简写：
+
+```bash
+./build/cppjudge judge submissions/solution.cpp --problem problems/A+B
+```
+
+查看命令帮助：
+
+```bash
+./build/cppjudge --help
+./build/cppjudge judge --help
+```
+
+高级用户可以临时覆盖 `problem.json` 中的限制：
+
+```bash
+./build/cppjudge judge \
+  --problem problems/A+B \
+  --submission submissions/solution.cpp \
+  --time-limit-ms 2000 \
+  --memory-limit-mb 256 \
+  --output-limit-mb 4 \
+  --compare-mode floating \
+  --compile-time-limit-ms 10000
+```
+
+还可使用 `--sandbox-type` 临时覆盖沙箱类型。override 只适合调试和高级用途，题目限制的权威来源仍应是 `problem.json`。
+
+### 5. 查看结果
+
+终端会显示最终 verdict。Quick Start 示例应输出 `Final Verdict: Accepted`。完整 JSON 日志位于：
+
+```bash
+python3 -m json.tool build/judge_log.json
+```
+
+每次评测的独立日志和输出保存在 `build/runs/<run_id>/`。
+
+## Legacy / Developer Override 用法
+
+旧 positional CLI 继续兼容已有脚本和开发流程：
+
+```bash
+./build/cppjudge submissions/solution.cpp problems/A+B 1000 128 1 exact 5000
+```
+
+参数顺序依次为 submission、problem、time、memory、output、compare mode 和 compile time。新用户应优先使用 `cppjudge judge`，让限制来自 `problem.json`。
+
+## 当前范围
+
+CPPJUDGE 当前没有真正的 `import`、zip 上传、题目上传服务、Web 前端、数据库或比赛系统。题目通过目录和 `problem.json` 管理，提交通过本地文件传入。
+
+
+## 诊断、版本和退出码
+
+查看版本：
+
+```bash
+./build/cppjudge --version
+```
+
+也可以使用：
+
+```bash
+./build/cppjudge version
+```
+
+检查当前机器的产品安全路径就绪情况：
+
+```bash
+./build/cppjudge doctor
+```
+
+`doctor` 只做环境诊断，不执行判题。它会报告 cppjudge version、git commit、platform、当前工作目录、nsjail、cgroup v2、当前 cgroup path、memory/pids controller、seccomp policy，以及产品沙箱就绪状态。
+
+状态含义：
+
+- `READY`：nsjail 可用，cgroup v2 和 memory/pids controller 可见，seccomp policy 可读，并且当前 cgroup 看起来可写入 delegated child cgroup。
+- `NOT_READY`：关键依赖缺失，例如 nsjail 不存在、cgroup v2 不存在或 seccomp policy 不可读。
+- `NOT_VERIFIED`：依赖存在，但当前会话无法证明产品路径完整可用；普通 SSH session 常见这种状态，因为缺少 delegated cgroup 写权限。
+
+基础 exit code 语义：
+
+| Exit code | 含义 |
+|-----------|------|
+| 0 | 命令成功执行；judge verdict 为 Accepted；或 doctor 为 READY |
+| 1 | 判题完成但 verdict 不是 Accepted，例如 WA / CE / RE / TLE / MLE / OLE |
+| 2 | CLI 参数错误；或 doctor 运行成功但产品路径为 NOT_READY / NOT_VERIFIED |
+| 3 | System Error 或工具自身错误 |
+
+## judge_log.json schema v1
+
+每次判题都会写出 `build/judge_log.json`。顶层字段包含：
+
+```json
+{
+  "schema_version": 1,
+  "tool": "cppjudge",
+  "cppjudge_version": "0.1.0-dev",
+  "git_commit": "10d2bdd",
+  "cli_mode": "judge",
+  "problem_dir": "problems/A+B",
+  "submission_file": "submissions/solution.cpp",
+  "final_verdict": "Accepted",
+  "results": []
+}
+```
+
+旧字段不会删除；schema v1 只是给现有日志补充稳定识别字段。更完整的草案见 `docs/JSON_SCHEMA.md`。题目目录格式见 `docs/PROBLEM_FORMAT.md`，排错指南见 `docs/TROUBLESHOOTING.md`，发布前检查见 `docs/RELEASE_CHECKLIST.md`。
+
 
 ## 评测结果
 
@@ -316,6 +380,10 @@ bash scripts/run_tests.sh
 - [开发路线图](docs/ROADMAP.md)
 - [工作区策略](docs/WORKSPACE.md)
 - [测试约定](docs/TESTING.md)
+- [题目格式](docs/PROBLEM_FORMAT.md)
+- [JSON schema v1 草案](docs/JSON_SCHEMA.md)
+- [故障排查](docs/TROUBLESHOOTING.md)
+- [发布检查清单](docs/RELEASE_CHECKLIST.md)
 - [nsjail 加固计划](docs/nsjail-plan.md)
 - [nsjail 安全测试矩阵](docs/security-test-matrix.md)
 

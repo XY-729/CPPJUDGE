@@ -1,11 +1,11 @@
-#include <bits/stdc++.h>
-using namespace std;
+#include <iostream>
 
 int main() {
-    vector<vector<int>> v;
+    long long a = 0;
+    long long b = 0;
 
-    while (true) {
-        v.emplace_back(1024 * 1024, 1); // 每次真实写入约 4MB
+    while (std::cin >> a >> b) {
+        std::cout << (a + b) << '\n';
     }
 
     return 0;
