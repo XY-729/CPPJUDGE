@@ -1,12 +1,12 @@
 # CPPJUDGE Last Task Report
 
-REPORT_VERSION: 1
+REPORT_VERSION: 2
 
 TASK_ID: REPO-AUDIT-DOC-REFRESH-2026-06-20
 
-STATUS: PARTIAL
+STATUS: COMPLETE
 
-FINISHED_AT: 2026-06-20 Asia/Shanghai
+FINISHED_AT: 2026-06-21 Asia/Shanghai
 
 WORKSPACE_MODE: Windows Codex workspace with SSH access to Rocky VM
 
@@ -16,9 +16,9 @@ REMOTE_HOST: 192.168.60.131
 
 GIT_ROOT: /home/xiyuan729/cppjudge on VM; local mirror at C:\\Users\\xiyua\\Documents\\New project\\cppjudge_vm
 
-BRANCH: stage3d-rootfs
+BRANCH: master
 
-HEAD_COMMIT: 7e69963 feat: enforce seccomp policy in nsjail sandbox
+MERGED_HEAD_COMMIT: 0330f43 docs: trim product audit markdown
 
 ## 1. Task objective
 
@@ -32,7 +32,10 @@ Audit the CPPJUDGE project, identify remaining product-grade gaps, inspect Claud
 - Ran current build/test profiles on the VM.
 - Updated stale progress documentation.
 - Added a product-readiness audit document.
-- Prepared branch cleanup recommendations.
+- Prepared and executed the confirmed branch cleanup.
+- Fast-forwarded GitHub `master` to `0330f43`.
+- Deleted the three confirmed obsolete GitHub branches.
+- Switched the VM and Windows mirror to `master` and removed obsolete local/tracking branches.
 
 Branch deletion, GitHub push, and final merge were not executed because they are destructive or externally visible actions and the exact merge path still needs confirmation.
 
@@ -89,7 +92,7 @@ Documentation was refreshed to reflect the actual current state:
 - `docs/OVERVIEW.md` now serves as the forward-looking project outline from the current point onward.
 - `PROGRESS.md` now reflects Stage 3A/3B/3C implementation status and the environment-gated verification gap.
 - `CURRENT_TASK.md` now describes the active audit/docs/branch cleanup task instead of the stale Stage 3A task.
-- `LAST_TASK_REPORT.md` now records this audit task and explicitly marks the branch cleanup/merge as pending confirmation.
+- `LAST_TASK_REPORT.md` now records the completed audit, merge, and branch cleanup state.
 - `docs/product-readiness-audit.md` captures product-grade gaps in security, deployment, CLI, schema, rootfs, seccomp, cgroup, and branch management.
 
 ## 8. Commands executed
@@ -173,8 +176,8 @@ PASS
 - Stale progress reports updated: PASS.
 - `docs/OVERVIEW.md` replaced with current project outline: PASS.
 - GitHub branches inspected: PASS.
-- Useless branch deletion: NOT_VERIFIED / PENDING CONFIRMATION.
-- Final merge: NOT_VERIFIED / PENDING CONFIRMATION.
+- Obsolete branch deletion: PASS.
+- Final fast-forward to `master`: PASS.
 
 ## 12. Unexpected changes
 
@@ -185,15 +188,10 @@ None.
 - nsjail/security/seccomp tests are not proven in the current SSH session because cgroup delegation is missing.
 - seccomp policy is deny-list based and still uses `DEFAULT ALLOW`.
 - rootfs is not fixed/versioned.
-- GitHub `master` is behind VM `stage3d-rootfs`.
-- Deleting remote branches before merging `stage3d-rootfs` would risk losing convenient branch references, even though the commits are still reachable locally.
 
 ## 14. Blockers
 
-- Need user confirmation for merge path:
-  - direct push/merge to `master`; or
-  - push a PR branch first.
-- Need confirmation before deleting remote branches.
+None for repository cleanup. Delegated cgroup access remains an environment prerequisite for complete nsjail/security verification.
 
 ## 15. Documentation state
 
@@ -213,19 +211,18 @@ None.
 
 ## 17. Exact next-state summary
 
-The repository documentation now describes the current implementation and product-readiness gap more accurately. Branch cleanup and final merge remain pending explicit confirmation.
+The repository documentation now describes the current implementation and product-readiness gap more accurately. GitHub, the VM, and the Windows mirror are aligned on `master`; obsolete branches are removed.
 
 ## 18. Recommended next task
 
-- objective: decide and execute the merge/cleanup strategy.
-- prerequisites: user confirms direct merge to `master` or PR branch workflow.
-- allowed scope: commit documentation changes, push selected branch, merge as confirmed, delete confirmed obsolete branches.
-- prohibited scope: force push, reset hard, delete branches not listed in the confirmed cleanup set.
+- objective: begin the next product-hardening task.
+- prerequisites: choose a delegated cgroup-capable verification environment for nsjail/security tests.
+- allowed scope: fixed rootfs, seccomp allow-list, low-privilege mapping, CLI/doctor/schema work.
+- prohibited scope: treating skipped nsjail/security tests as product-grade security evidence.
 - acceptance criteria:
   - documentation commit exists;
-  - GitHub `master` includes `stage3d-rootfs` work or a PR exists;
-  - obsolete branches deleted only after merge;
-  - final branch list is clean.
+  - delegated nsjail/security profiles execute without skips;
+  - resulting hardening changes preserve the portable test baseline.
 - tests likely required:
   - `bash scripts/run_all_tests.sh portable`
   - delegated nsjail/security tests when environment supports them.
@@ -234,10 +231,10 @@ The repository documentation now describes the current implementation and produc
 
 ```text
 CURRENT_STATE:
-CPPJUDGE VM branch stage3d-rootfs at 7e69963 contains cgroup v2 and seccomp work. GitHub master is behind.
+CPPJUDGE VM, Windows mirror, and GitHub are aligned on master. GitHub master contains the former stage3d-rootfs work and points to 0330f43 before this final documentation-status commit.
 
 COMPLETED:
-Project audit, documentation refresh, product-readiness report, branch ancestry inspection, portable tests.
+Project audit, documentation refresh, product-readiness report, branch ancestry inspection, portable tests, GitHub master fast-forward, obsolete branch deletion, VM/local branch cleanup.
 
 PARTIAL:
 security profile only partially verified; nsjail/seccomp tests skipped due missing cgroup delegation.
@@ -246,7 +243,7 @@ FAILED:
 None in code/test baseline; environment lacks cgroup write permission for current SSH session.
 
 NOT_VERIFIED:
-delegated nsjail tests, seccomp tests, final merge, branch deletion.
+delegated nsjail tests and seccomp tests in a cgroup-delegated environment.
 
 CHANGED_FILES:
 docs/OVERVIEW.md
@@ -256,16 +253,16 @@ CURRENT_TASK.md
 LAST_TASK_REPORT.md
 
 UNCOMMITTED_STATE:
-documentation changes pending commit.
+none expected after this report is committed and pushed.
 
 RISKS:
-remote master behind; seccomp deny-list; rootfs not fixed; no delegated security proof.
+seccomp deny-list; rootfs not fixed; no delegated security proof.
 
 BLOCKERS:
-need user confirmation for merge path and branch deletion.
+none for repository cleanup; delegated cgroup access is required for full security verification.
 
 NEXT_OBJECTIVE:
-commit docs, merge stage3d-rootfs into master or push PR branch, then delete obsolete branches after confirmation.
+begin product hardening: delegated nsjail/security verification, fixed rootfs, seccomp allow-list, low-privilege mapping, doctor/schema work.
 
 NEXT_ALLOWED_SCOPE:
 repository maintenance and confirmed git writes.

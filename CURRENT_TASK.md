@@ -2,7 +2,7 @@
 
 **TASK_ID**: REPO-AUDIT-DOC-REFRESH-2026-06-20
 
-**STATUS**: IN_PROGRESS
+**STATUS**: COMPLETE
 
 **SOURCE_EDIT_AUTHORIZATION**: DOCS_ONLY
 
@@ -18,12 +18,11 @@ Audit the current CPPJUDGE project state, identify gaps between the current impl
 
 ## Current Findings
 
-- Current VM branch: `stage3d-rootfs`.
-- Current VM HEAD: `7e69963 feat: enforce seccomp policy in nsjail sandbox`.
-- GitHub `master` is behind the VM branch.
-- GitHub `codex/judge-architecture-tests` is already contained in GitHub `master`.
-- GitHub `claudeworker` and `stage2-testing` are contained in VM `stage3d-rootfs`, but not yet in GitHub `master`.
-- `stage3d-rootfs` exists on the VM/local clone but is not present as a GitHub branch.
+- Current VM branch: `master`.
+- Current VM/local/GitHub HEAD: `0330f43 docs: trim product audit markdown`.
+- GitHub `master` now contains the former VM `stage3d-rootfs` work.
+- GitHub obsolete branches `codex/judge-architecture-tests`, `claudeworker`, and `stage2-testing` have been deleted.
+- VM and Windows mirror local branches have been cleaned up to `master`; stale remote-tracking refs were removed.
 
 ## Verification Performed
 
@@ -67,15 +66,13 @@ Requires confirmation before execution:
 - `CLAUDE.md`
 - `.claude/rules/documentation.md`
 
-## Recommended Next Decision
+## Completion State
 
-Confirm one of the following merge paths:
+Completed repository-maintenance actions:
 
-1. Directly merge `stage3d-rootfs` into `master` and push `master`.
-2. Push a temporary GitHub branch from `stage3d-rootfs`, open/inspect a PR, then merge.
+1. Fast-forwarded GitHub `master` to `0330f43`.
+2. Deleted GitHub branches `codex/judge-architecture-tests`, `claudeworker`, and `stage2-testing`.
+3. Fast-forwarded VM `master` to `0330f43` and switched the VM working tree to `master`.
+4. Deleted merged VM/local development branches and stale tracking refs.
 
-After the merge target is confirmed, obsolete branches can be deleted in this order:
-
-1. `codex/judge-architecture-tests`
-2. `claudeworker`
-3. `stage2-testing`
+Remaining product work is the Stage 4/P0 hardening track: delegated nsjail/security verification, fixed rootfs, seccomp allow-list, low-privilege mapping, and CLI/doctor/schema stabilization.

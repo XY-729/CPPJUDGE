@@ -161,23 +161,19 @@ GitHub 远端当前分支：
 
 | 分支 | 提交 | 建议 |
 |------|------|------|
-| `master` | `c882bc1` | 当前稳定主线，但落后大量开发提交 |
-| `stage2-testing` | `4106bbb` | 已被 VM 本地 `stage3d-rootfs` 包含；合并后可删 |
-| `claudeworker` | `43884a7` | 已被 `stage3d-rootfs` 包含；合并后可删 |
-| `codex/judge-architecture-tests` | `67ee464` | 已被 `master` 包含，可删 |
+| `master` | `0330f43` | 当前唯一 GitHub 分支；已包含 Stage 3A/3B/3C 与文档审计更新 |
 
 VM 本地分支：
 
 | 分支 | 提交 | 说明 |
 |------|------|------|
-| `stage3d-rootfs` | `7e69963` | 当前最新开发状态，未推到 GitHub |
-| `stage2-testing` | `7e69963` | VM 本地同样指向最新状态，但 GitHub 同名分支仍停在 `4106bbb` |
+| `master` | `0330f43` | VM 当前工作分支；已与 GitHub master 对齐 |
 
 安全建议：
 
-- 先把 `stage3d-rootfs` 的最新内容合并到 `master`；
-- 再删除已被包含的旧分支；
-- 远端删除前需要确认目标：是直接更新 GitHub `master`，还是先推一个 PR 分支。
+- GitHub 已收敛为单一 `master` 分支；
+- 旧分支 `codex/judge-architecture-tests`、`claudeworker`、`stage2-testing` 已删除；
+- 后续分支策略建议继续保持短生命周期开发分支，合并后及时清理。
 
 ## 7. 当前单一事实源
 

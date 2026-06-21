@@ -68,27 +68,17 @@ GitHub 远端：
 
 | 分支 | 提交 | 判断 |
 |------|------|------|
-| `master` | `c882bc1` | 主线，落后当前 VM 开发状态 |
-| `stage2-testing` | `4106bbb` | 被 VM `stage3d-rootfs` 包含，合并后可删 |
-| `claudeworker` | `43884a7` | 被 VM `stage3d-rootfs` 包含，合并后可删 |
-| `codex/judge-architecture-tests` | `67ee464` | 已被 `master` 包含，可删 |
+| `master` | `0330f43` | 已包含 Stage 3A/3B/3C 与文档审计更新 |
 
 VM 本地：
 
 | 分支 | 提交 | 判断 |
 |------|------|------|
-| `stage3d-rootfs` | `7e69963` | 当前最新开发状态，尚未推到 GitHub |
-| `stage2-testing` | `7e69963` | VM 本地同指向最新状态，但 GitHub 同名分支仍旧 |
+| `master` | `0330f43` | VM 当前工作分支；已与 GitHub master 对齐 |
 
 ## 建议下一步
 
-1. 确认合并策略：直接把 `stage3d-rootfs` 合入 GitHub `master`，还是先推 PR 分支。
-2. 合并前把本次文档刷新提交到当前开发分支。
-3. 在 delegated systemd 环境中跑通：
+1. 在 delegated systemd 环境中跑通：
    - `bash scripts/run_all_tests.sh nsjail`
    - `bash scripts/run_all_tests.sh security`
-4. 合并后删除无用远端分支：
-   - `codex/judge-architecture-tests`
-   - `claudeworker`
-   - `stage2-testing`
-5. 进入产品化 P0：fixed rootfs、seccomp allow-list、low-privilege mapping、doctor。
+2. 进入产品化 P0：fixed rootfs、seccomp allow-list、low-privilege mapping、doctor。

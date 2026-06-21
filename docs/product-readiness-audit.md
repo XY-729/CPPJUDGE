@@ -172,20 +172,15 @@ GitHub 远端分支：
 
 | 分支 | 状态 |
 |------|------|
-| `master` | 落后 VM 当前开发状态 |
-| `stage2-testing` | GitHub 上停在 `4106bbb`，已被 VM `stage3d-rootfs` 包含 |
-| `claudeworker` | 已被 VM `stage3d-rootfs` 包含 |
-| `codex/judge-architecture-tests` | 已被 GitHub `master` 包含 |
+| `master` | 当前唯一 GitHub 分支，指向 `0330f43` |
 
-建议清理顺序：
+清理结果：
 
-1. 把 VM `stage3d-rootfs` 合入 `master`。
-2. 确认 CI / portable 测试通过。
-3. 删除 `codex/judge-architecture-tests`。
-4. 删除 `claudeworker`。
-5. 删除 `stage2-testing`。
+1. VM `stage3d-rootfs` 工作已快进合入 GitHub `master`。
+2. `codex/judge-architecture-tests`、`claudeworker`、`stage2-testing` 已删除。
+3. VM 和 Windows 本地镜像已切回 `master` 并清理旧本地分支。
 
-注意：删除远端分支属于破坏性仓库操作，应在明确确认后执行。
+注意：安全 profile 仍需要在具备 cgroup delegation 的环境中复验；本次仓库清理不改变该产品风险判断。
 
 ## 1.0 前置完成标准
 
