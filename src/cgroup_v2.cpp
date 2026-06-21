@@ -23,6 +23,104 @@ namespace {
 
 static constexpr int CGROUP_OPS_TIMEOUT_SEC = 5;
 
+std::string trim_copy(std::string value) {
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r' || value.back() == ' ' || value.back() == '\t')) {
+        value.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < value.size() && (value[start] == '\n' || value[start] == '\r' || value[start] == ' ' || value[start] == '\t')) {
+        ++start;
+    }
+    if (start > 0) {
+        value.erase(0, start);
+    }
+    return value;
+}
+
+std::string read_text_file_best_effort(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return "";
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+bool text_has_word(const std::string& text, const std::string& word) {
+    std::istringstream iss(text);
+    std::string token;
+    while (iss >> token) {
+        if (token == word) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_memory_and_pids(const std::string& text) {
+    return text_has_word(text, "memory") && text_has_word(text, "pids");
+}
+
+std::size_t direct_process_count(const std::string& cgroup_dir) {
+    std::istringstream iss(read_text_file_best_effort(cgroup_dir + "/cgroup.procs"));
+    std::string pid;
+    std::size_t count = 0;
+    while (iss >> pid) {
+        ++count;
+    }
+    return count;
+}
+
+std::string parent_cgroup_dir(const std::string& mount, const std::string& path) {
+    if (path.empty() || path == mount || path.size() <= mount.size()) {
+        return "";
+    }
+    std::size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash < mount.size()) {
+        return "";
+    }
+    if (slash == mount.size()) {
+        return mount;
+    }
+    return path.substr(0, slash);
+}
+
+std::string cgroup_diag(const std::string& label, const std::string& dir) {
+    std::ostringstream oss;
+    oss << label << "=" << dir
+        << " cgroup.type=" << trim_copy(read_text_file_best_effort(dir + "/cgroup.type"))
+        << " cgroup.controllers=" << trim_copy(read_text_file_best_effort(dir + "/cgroup.controllers"))
+        << " cgroup.subtree_control=" << trim_copy(read_text_file_best_effort(dir + "/cgroup.subtree_control"))
+        << " cgroup.procs_count=" << direct_process_count(dir);
+    return oss.str();
+}
+
+bool is_usable_delegation_parent(const std::string& dir) {
+    std::string subtree = read_text_file_best_effort(dir + "/cgroup.subtree_control");
+    if (!has_memory_and_pids(subtree)) {
+        return false;
+    }
+    return access((dir + "/cgroup.procs").c_str(), W_OK) == 0 &&
+           access(dir.c_str(), W_OK) == 0;
+}
+
+bool is_cgroup_empty(const std::string& dir) {
+    return direct_process_count(dir) == 0;
+}
+
+bool is_safe_child_name(const std::string& name) {
+    if (name.empty()) return false;
+    for (char ch : name) {
+        bool ok = (ch >= 'a' && ch <= 'z') ||
+                  (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= '0' && ch <= '9') ||
+                  ch == '_' || ch == '-' || ch == '.';
+        if (!ok) return false;
+    }
+    return true;
+}
+
 bool is_safe_cgroup_char(char ch) {
     return (ch >= 'a' && ch <= 'z') ||
            (ch >= 'A' && ch <= 'Z') ||
@@ -97,6 +195,24 @@ CgroupV2Manager::~CgroupV2Manager() {
     if (!run_path_.empty()) {
         CgroupV2Error ignored;
         cleanup_run(ignored);
+    }
+
+    // Best-effort cleanup of the private cgroup tree.  Move cppjudge back to
+    // its original cgroup first so manager_<pid> becomes empty and removable.
+    if (!manager_path_.empty()) {
+        if (!original_root_.empty()) {
+            CgroupV2Error ignored;
+            write_cgroup_file(original_root_, "cgroup.procs",
+                              std::to_string(own_pid_),
+                              ignored, "move self back to original cgroup");
+        }
+        rmdir(manager_path_.c_str());
+        manager_path_.clear();
+    }
+
+    if (owns_service_root_ && !service_root_.empty()) {
+        rmdir(service_root_.c_str());
+        service_root_.clear();
     }
 }
 
@@ -245,18 +361,109 @@ bool CgroupV2Manager::init_service(CgroupV2Error& error) {
     if (!error.ok()) return false;
 
     mount_ = paths.mount;
-    service_root_ = paths.service_root;
+    original_root_ = paths.service_root;
 
     struct stat st;
-    if (stat(service_root_.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (stat(original_root_.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
         error.code = CgroupV2ErrorCode::DelegationMissing;
-        error.message = "Service root cgroup does not exist";
-        error.path = service_root_;
+        error.message = "Current cgroup does not exist";
+        error.path = original_root_;
         error.saved_errno = errno;
         return false;
     }
 
-    // Create manager_<pid>
+    // Pick the nearest ancestor that already delegates memory+pids to children.
+    // The current systemd-run scope can contain shell/test-harness processes and
+    // often has an empty subtree_control; enabling domain controllers there
+    // violates cgroup v2's no-internal-process rule.  Creating our own empty
+    // parent below an already-delegating ancestor avoids moving unrelated
+    // processes and keeps per-run cgroups limitable.
+    delegation_root_.clear();
+    for (std::string candidate = original_root_;
+         !candidate.empty();
+         candidate = parent_cgroup_dir(cgroup_fs_path("/sys/fs/cgroup"), candidate)) {
+        if (is_usable_delegation_parent(candidate)) {
+            delegation_root_ = candidate;
+            break;
+        }
+    }
+
+    if (delegation_root_.empty()) {
+        error.code = CgroupV2ErrorCode::DelegationMissing;
+        error.message = "No writable ancestor cgroup delegates memory and pids. " +
+                        cgroup_diag("current_cgroup", original_root_) +
+                        " suggested_action=run cppjudge inside a systemd unit/scope with Delegate=memory pids";
+        error.path = original_root_;
+        return false;
+    }
+
+    std::string service_name = "cppjudge_" + std::to_string(own_pid_);
+    if (!is_safe_child_name(service_name)) {
+        error.code = CgroupV2ErrorCode::CreateFailed;
+        error.message = "Unsafe private cgroup name";
+        return false;
+    }
+
+    service_root_ = delegation_root_ + "/" + service_name;
+    if (mkdir(service_root_.c_str(), 0755) != 0) {
+        if (errno != EEXIST) {
+            error.code = CgroupV2ErrorCode::CreateFailed;
+            error.message = "Cannot create private cppjudge service cgroup; " +
+                            cgroup_diag("delegation_root", delegation_root_);
+            error.path = service_root_;
+            error.saved_errno = errno;
+            return false;
+        }
+    }
+    owns_service_root_ = true;
+
+    // Enable controllers while service_root_ is still empty.  This is the key
+    // no-internal-process invariant: cppjudge itself will move to manager_<pid>
+    // only after service_root_ can delegate memory+pids to run cgroups.
+    {
+        std::string ctrls_str;
+        if (!read_cgroup_file(service_root_, "cgroup.controllers", ctrls_str, error))
+            return false;
+        while (!ctrls_str.empty() && (ctrls_str.back() == '\n' || ctrls_str.back() == ' '))
+            ctrls_str.pop_back();
+
+        if (!has_memory_and_pids(ctrls_str)) {
+            error.code = CgroupV2ErrorCode::ControllerMissing;
+            error.message = "Required controllers missing in private service cgroup: " + ctrls_str +
+                            "; " + cgroup_diag("delegation_root", delegation_root_);
+            error.path = service_root_ + "/cgroup.controllers";
+            return false;
+        }
+
+        if (!is_cgroup_empty(service_root_)) {
+            error.code = CgroupV2ErrorCode::RootPopulated;
+            error.message = "Private service cgroup unexpectedly has direct processes before enabling controllers; " +
+                            cgroup_diag("target_cgroup", service_root_) +
+                            " suggested_action=remove stale cppjudge cgroup or retry";
+            error.path = service_root_;
+            return false;
+        }
+
+        if (!enable_controllers(service_root_, "+memory +pids", error)) {
+            error.message += "; The target cgroup has direct processes; cgroup v2 domain controllers cannot be enabled until the cgroup is empty. " +
+                             cgroup_diag("current_cgroup", original_root_) + " " +
+                             cgroup_diag("target_cgroup", service_root_) +
+                             " suggested_action=ensure cppjudge creates an empty private parent cgroup under a delegated ancestor";
+            return false;
+        }
+
+        std::string sub_ctrl;
+        if (!read_cgroup_file(service_root_, "cgroup.subtree_control", sub_ctrl, error))
+            return false;
+        if (!has_memory_and_pids(sub_ctrl)) {
+            error.code = CgroupV2ErrorCode::VerificationFailed;
+            error.message = "Controllers not enabled: " + trim_copy(sub_ctrl);
+            error.path = service_root_ + "/cgroup.subtree_control";
+            return false;
+        }
+    }
+
+    // Create manager_<pid> after service_root_ can delegate controllers.
     manager_path_ = service_root_ + "/manager_" + std::to_string(own_pid_);
     if (mkdir(manager_path_.c_str(), 0755) != 0) {
         if (errno != EEXIST) {
@@ -268,7 +475,7 @@ bool CgroupV2Manager::init_service(CgroupV2Error& error) {
         }
     }
 
-    // Move self into manager
+    // Move self into manager leaf; service_root_ stays process-free.
     {
         std::string pid_str = std::to_string(own_pid_);
         if (!write_cgroup_file(manager_path_, "cgroup.procs", pid_str,
@@ -299,42 +506,6 @@ bool CgroupV2Manager::init_service(CgroupV2Error& error) {
             error.code = CgroupV2ErrorCode::VerificationFailed;
             error.message = "Self not in manager after move";
             error.path = manager_path_;
-            return false;
-        }
-    }
-
-    // Enable controllers in service_root (now we're in manager, sr is empty)
-    {
-        std::string ctrls_str;
-        if (!read_cgroup_file(service_root_, "cgroup.controllers", ctrls_str, error))
-            return false;
-        while (!ctrls_str.empty() && (ctrls_str.back() == '\n' || ctrls_str.back() == ' '))
-            ctrls_str.pop_back();
-
-        bool has_mem = false, has_pids = false;
-        std::istringstream ciss(ctrls_str);
-        std::string c;
-        while (ciss >> c) {
-            if (c == "memory") has_mem = true;
-            if (c == "pids") has_pids = true;
-        }
-        if (!has_mem || !has_pids) {
-            error.code = CgroupV2ErrorCode::ControllerMissing;
-            error.message = "Required controllers missing: " + ctrls_str;
-            error.path = service_root_ + "/cgroup.controllers";
-            return false;
-        }
-        if (!enable_controllers(service_root_, "+memory +pids", error))
-            return false;
-
-        std::string sub_ctrl;
-        if (!read_cgroup_file(service_root_, "cgroup.subtree_control", sub_ctrl, error))
-            return false;
-        if (sub_ctrl.find("memory") == std::string::npos ||
-            sub_ctrl.find("pids") == std::string::npos) {
-            error.code = CgroupV2ErrorCode::VerificationFailed;
-            error.message = "Controllers not enabled: " + sub_ctrl;
-            error.path = service_root_ + "/cgroup.subtree_control";
             return false;
         }
     }

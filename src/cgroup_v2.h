@@ -172,11 +172,14 @@ private:
     bool initialized_ = false;
     bool has_local_events_ = false;
 
-    std::string mount_;          // cgroup2 mount point
-    std::string service_root_;   // delegated service root
-    std::string manager_path_;   // manager_<pid> cgroup
-    std::string run_path_;       // current run cgroup
-    std::string run_name_;       // short name of current run
+    std::string mount_;             // cgroup2 mount point
+    std::string original_root_;     // cgroup where cppjudge started
+    std::string delegation_root_;   // ancestor with +memory +pids enabled for children
+    std::string service_root_;      // private empty cppjudge parent cgroup
+    std::string manager_path_;      // manager_<pid> leaf cgroup for cppjudge itself
+    std::string run_path_;          // current run cgroup
+    std::string run_name_;          // short name of current run
+    bool owns_service_root_ = false;
     pid_t own_pid_ = 0;
 
     static std::atomic<bool> s_test_root_set_;

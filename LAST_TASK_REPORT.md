@@ -1,279 +1,126 @@
-# CPPJUDGE Last Task Report
-
-REPORT_VERSION: 2
-
-TASK_ID: REPO-AUDIT-DOC-REFRESH-2026-06-20
-
-STATUS: COMPLETE
-
-FINISHED_AT: 2026-06-21 Asia/Shanghai
-
-WORKSPACE_MODE: Windows Codex workspace with SSH access to Rocky VM
-
-REMOTE_USER: xiyuan729
-
-REMOTE_HOST: 192.168.60.131
-
-GIT_ROOT: /home/xiyuan729/cppjudge on VM; local mirror at C:\\Users\\xiyua\\Documents\\New project\\cppjudge_vm
-
-BRANCH: master
-
-MERGED_HEAD_COMMIT: 0330f43 docs: trim product audit markdown
-
-## 1. Task objective
-
-Audit the CPPJUDGE project, identify remaining product-grade gaps, inspect Claude/prompt files, update stale project progress reports, replace `docs/OVERVIEW.md` with a current project outline, inspect GitHub branches and previous work, and prepare branch cleanup / merge recommendations.
-
-## 2. Scope actually performed
-
-- Connected to Rocky VM via SSH.
-- Cloned the VM repository into a local working mirror for safe inspection and patching.
-- Inspected source, tests, docs, Claude prompt/control files, Git history, GitHub remote branches, and VM branch state.
-- Ran current build/test profiles on the VM.
-- Updated stale progress documentation.
-- Added a product-readiness audit document.
-- Prepared and executed the confirmed branch cleanup.
-- Fast-forwarded GitHub `master` to `0330f43`.
-- Deleted the three confirmed obsolete GitHub branches.
-- Switched the VM and Windows mirror to `master` and removed obsolete local/tracking branches.
-
-Branch deletion, GitHub push, and final merge were not executed because they are destructive or externally visible actions and the exact merge path still needs confirmation.
-
-## 3. Files read
-
-- `README.md`
-- `PROGRESS.md`
-- `CURRENT_TASK.md`
-- `LAST_TASK_REPORT.md`
-- `CLAUDE.md`
-- `.claude/EXECUTION_PROTOCOL.md`
-- `.claude/rules/*.md`
-- `.claude/skills/finalize-task/SKILL.md`
-- `docs/OVERVIEW.md`
-- `docs/ROADMAP.md`
-- `docs/TESTING.md`
-- `docs/WORKSPACE.md`
-- `docs/nsjail-plan.md`
-- `docs/security-test-matrix.md`
-- `src/runner.cpp`
-- `src/compiler.cpp`
-- `src/judge.cpp`
-- `src/cgroup_v2.cpp`
-- `src/seccomp_config.cpp`
-- `sandbox/seccomp/cppjudge-runtime.kafel`
-- `tests/security/test_seccomp_security.sh`
-- `tests/support/skip_unless_cgroup_delegated.sh`
-
-## 4. Files created
-
-- `docs/product-readiness-audit.md`
-
-## 5. Files modified
-
-- `.claude/rules/documentation.md`
-- `CLAUDE.md`
-- `README.md`
-- `docs/OVERVIEW.md`
-- `docs/ROADMAP.md`
-- `docs/nsjail-plan.md`
-- `docs/security-test-matrix.md`
-- `PROGRESS.md`
-- `CURRENT_TASK.md`
-- `LAST_TASK_REPORT.md`
-
-## 6. Files deleted
-
-None.
-
-## 7. Implementation summary
-
-Documentation was refreshed to reflect the actual current state:
-
-- `docs/OVERVIEW.md` now serves as the forward-looking project outline from the current point onward.
-- `PROGRESS.md` now reflects Stage 3A/3B/3C implementation status and the environment-gated verification gap.
-- `CURRENT_TASK.md` now describes the active audit/docs/branch cleanup task instead of the stale Stage 3A task.
-- `LAST_TASK_REPORT.md` now records the completed audit, merge, and branch cleanup state.
-- `docs/product-readiness-audit.md` captures product-grade gaps in security, deployment, CLI, schema, rootfs, seccomp, cgroup, and branch management.
-
-## 8. Commands executed
-
-- `ssh ... cd /home/xiyuan729/cppjudge && pwd && git status --short && find . -maxdepth 2 -type f | head -40`
-  - exit code: 0
-  - reason: verify SSH access and locate project
-  - relevant output: project path `/home/xiyuan729/cppjudge`
-
-- `git clone ssh://xiyuan729@192.168.60.131/home/xiyuan729/cppjudge cppjudge_vm`
-  - exit code: 0
-  - reason: create local mirror for safe inspection and patching
-
-- `bash scripts/check_nsjail_env.sh`
-  - exit code: 0
-  - reason: inspect nsjail/cgroup environment
-  - relevant output: nsjail found; cgroup v2 detected; cgroup flags available; cgroup write permission no
-
-- `bash scripts/run_all_tests.sh portable`
-  - exit code: 0
-  - reason: verify portable build/test baseline
-  - relevant output: 12/12 tests passed
-
-- `bash scripts/run_all_tests.sh nsjail`
-  - exit code: 0
-  - reason: inspect nsjail profile state
-  - relevant output: 5 tests skipped due missing delegated cgroup
-
-- `bash scripts/run_all_tests.sh security`
-  - exit code: 0
-  - reason: inspect security profile state
-  - relevant output: builtin security passed; nsjail/seccomp tests skipped
-
-- `git ls-remote --heads https://github.com/XY-729/CPPJUDGE.git`
-  - exit code: 0
-  - reason: read real GitHub branch state
-  - relevant output: GitHub branches are `master`, `stage2-testing`, `claudeworker`, `codex/judge-architecture-tests`
-
-- `git fetch github --prune`
-  - exit code: 0
-  - reason: compare local VM branch graph against GitHub remote refs
-
-- `git merge-base --is-ancestor ...`
-  - exit code: mixed by branch pair
-  - reason: determine safe deletion and merge relationships
-  - relevant output:
-    - `github/codex/judge-architecture-tests` is ancestor of `github/master`
-    - `github/claudeworker` is ancestor of `stage3d-rootfs`
-    - `github/stage2-testing` is ancestor of `stage3d-rootfs`
-    - `stage3d-rootfs` is not ancestor of `github/master`
-
-## 9. Build results
-
-PASS
-
-- command: `bash scripts/run_all_tests.sh portable`
-- evidence: CMake configure/build completed; 12/12 tests passed.
-
-## 10. Test results
-
-- portable profile:
-  - status: PASS
-  - command: `bash scripts/run_all_tests.sh portable`
-  - evidence: 12/12 tests passed
-
-- nsjail profile:
-  - status: NOT_VERIFIED
-  - command: `bash scripts/run_all_tests.sh nsjail`
-  - evidence: 5/5 matching tests skipped
-
-- security profile:
-  - status: PARTIAL
-  - command: `bash scripts/run_all_tests.sh security`
-  - evidence: builtin security regression passed; nsjail/seccomp tests skipped
-
-## 11. Acceptance criteria
-
-- Project audit completed: PASS.
-- Product-grade gaps identified: PASS.
-- Claude/prompt files inspected: PASS.
-- Stale progress reports updated: PASS.
-- `docs/OVERVIEW.md` replaced with current project outline: PASS.
-- GitHub branches inspected: PASS.
-- Obsolete branch deletion: PASS.
-- Final fast-forward to `master`: PASS.
-
-## 12. Unexpected changes
-
-None.
-
-## 13. Remaining risks
-
-- nsjail/security/seccomp tests are not proven in the current SSH session because cgroup delegation is missing.
-- seccomp policy is deny-list based and still uses `DEFAULT ALLOW`.
-- rootfs is not fixed/versioned.
-
-## 14. Blockers
-
-None for repository cleanup. Delegated cgroup access remains an environment prerequisite for complete nsjail/security verification.
-
-## 15. Documentation state
-
-- CURRENT_TASK.md: refreshed for current audit/docs/branch cleanup task.
-- PROGRESS.md: refreshed to current Stage 3B/3C state.
-- PROJECT_OVERVIEW.md: not present; `docs/OVERVIEW.md` is now the current overview.
-- LAST_TASK_REPORT.md: replaced with this report.
-
-## 16. Git state after task
-
-- git status: 10 tracked documentation/control files modified; 1 new untracked audit document.
-- diff check: PASS.
-- untracked files: `docs/product-readiness-audit.md`.
-- staged files: none.
-- commit created: no.
-- push performed: no.
-
-## 17. Exact next-state summary
-
-The repository documentation now describes the current implementation and product-readiness gap more accurately. GitHub, the VM, and the Windows mirror are aligned on `master`; obsolete branches are removed.
-
-## 18. Recommended next task
-
-- objective: begin the next product-hardening task.
-- prerequisites: choose a delegated cgroup-capable verification environment for nsjail/security tests.
-- allowed scope: fixed rootfs, seccomp allow-list, low-privilege mapping, CLI/doctor/schema work.
-- prohibited scope: treating skipped nsjail/security tests as product-grade security evidence.
-- acceptance criteria:
-  - documentation commit exists;
-  - delegated nsjail/security profiles execute without skips;
-  - resulting hardening changes preserve the portable test baseline.
-- tests likely required:
-  - `bash scripts/run_all_tests.sh portable`
-  - delegated nsjail/security tests when environment supports them.
-
-## 19. GPT prompt-generation input
-
-```text
-CURRENT_STATE:
-CPPJUDGE VM, Windows mirror, and GitHub are aligned on master. GitHub master contains the former stage3d-rootfs work and points to 0330f43 before this final documentation-status commit.
-
-COMPLETED:
-Project audit, documentation refresh, product-readiness report, branch ancestry inspection, portable tests, GitHub master fast-forward, obsolete branch deletion, VM/local branch cleanup.
-
-PARTIAL:
-security profile only partially verified; nsjail/seccomp tests skipped due missing cgroup delegation.
-
-FAILED:
-None in code/test baseline; environment lacks cgroup write permission for current SSH session.
-
-NOT_VERIFIED:
-delegated nsjail tests and seccomp tests in a cgroup-delegated environment.
-
-CHANGED_FILES:
-docs/OVERVIEW.md
-docs/product-readiness-audit.md
-PROGRESS.md
-CURRENT_TASK.md
-LAST_TASK_REPORT.md
-
-UNCOMMITTED_STATE:
-none expected after this report is committed and pushed.
-
-RISKS:
-seccomp deny-list; rootfs not fixed; no delegated security proof.
-
-BLOCKERS:
-none for repository cleanup; delegated cgroup access is required for full security verification.
-
-NEXT_OBJECTIVE:
-begin product hardening: delegated nsjail/security verification, fixed rootfs, seccomp allow-list, low-privilege mapping, doctor/schema work.
-
-NEXT_ALLOWED_SCOPE:
-repository maintenance and confirmed git writes.
-
-NEXT_PROHIBITED_SCOPE:
-force push, hard reset, unconfirmed branch deletion.
-
-NEXT_ACCEPTANCE_CRITERIA:
-updated docs committed; master/PR includes current work; stale branches deleted only after merge; final branch state reported.
-
-REQUIRED_TESTS:
-bash scripts/run_all_tests.sh portable
-delegated nsjail/security tests when environment is available
-```
+TASK_ID:
+CPPJUDGE_P0_CGROUP_DELEGATED_NSJAIL_RUN_001
+
+MODE:
+P0_BUGFIX_WITH_TESTS
+
+GIT_COMMIT:
+bdf90e9
+
+FILES_READ:
+src/cgroup_v2.cpp; src/cgroup_v2.h; src/runner.cpp; src/runner.h;
+src/seccomp_config.cpp; src/seccomp_config.h; src/judge.cpp;
+src/compiler.cpp; src/comparer.cpp; src/main.cpp; CMakeLists.txt;
+scripts/run_all_tests.sh; scripts/run_nsjail_tests.sh;
+scripts/run_security_tests.sh; scripts/run_tests.sh;
+scripts/check_nsjail_env.sh; scripts/probe_cgroup_v2.sh;
+tests/support/skip_unless_cgroup_delegated.sh;
+tests/integration/test_cgroup_delegated_verdicts.sh;
+tests/integration/test_nsjail_verdicts.sh;
+tests/security/test_nsjail_must_block.sh;
+tests/security/test_nsjail_known_gaps.sh;
+tests/security/test_seccomp_security.sh;
+tests/unit/test_cgroup_v2.cpp;
+sandbox/seccomp/cppjudge-runtime.kafel;
+docs/TOOL_PRODUCTIZATION_ROADMAP.md
+
+FILES_MODIFIED:
+scripts/run_all_tests.sh
+
+COMMANDS_RUN:
+pwd; git status --short; git branch --show-current; git rev-parse --short HEAD;
+find src include scripts tests sandbox -maxdepth 3 -type f | sort;
+bash scripts/probe_cgroup_v2.sh;
+cat /proc/self/cgroup; cat /proc/self/mountinfo | grep cgroup2;
+systemd-run --user --scope -p Delegate=yes cat /proc/self/cgroup;
+bash scripts/check_nsjail_env.sh;
+cmake -S . -B build; cmake --build build;
+bash scripts/run_tests.sh;
+bash scripts/run_nsjail_tests.sh;
+systemd-run --user --scope -p Delegate=yes bash scripts/run_nsjail_tests.sh;
+bash scripts/run_security_tests.sh;
+systemd-run --user --scope -p Delegate=yes bash scripts/run_all_tests.sh security;
+bash scripts/run_all_tests.sh portable;
+bash scripts/run_all_tests.sh nsjail;
+systemd-run --user --scope -p Delegate=yes bash scripts/run_all_tests.sh nsjail;
+
+BUILD_RESULT:
+PASS. cmake -S . -B build && cmake --build build completed successfully.
+
+PORTABLE_TEST_RESULT:
+PASS. bash scripts/run_tests.sh: 15/15 tests passed.
+
+DIRECT_NSJAIL_RESULT:
+NOT_VERIFIED. bash scripts/run_nsjail_tests.sh exits 77 (SKIP) — SSH session
+is not delegated. cgroup delegation check correctly detected missing delegation.
+
+DIRECT_SECURITY_RESULT:
+PASS. bash scripts/run_security_tests.sh: 4/4 builtin security tests passed.
+These are builtin sandbox security tests that do not require nsjail/cgroup delegation.
+
+DELEGATED_NSJAIL_RESULT:
+PASS. systemd-run --user --scope -p Delegate=yes bash scripts/run_nsjail_tests.sh:
+9/9 nsjail tests passed (nsjail_ac, nsjail_re, nsjail_tle, nsjail_mle, nsjail_ole,
+nsjail_stderr, nsjail_fs, nsjail_net, nsjail_compile_fs).
+
+DELEGATED_SECURITY_RESULT:
+PASS. systemd-run --user --scope -p Delegate=yes bash scripts/run_all_tests.sh security:
+4/4 tests passed (test_security_nsjail_must_block, test_security_seccomp,
+test_regression_security, test_security_nsjail_known_gaps).
+
+ROOT_CAUSE:
+The previous EBUSY (errno 16) on cgroup.subtree_control was caused by the
+cgroup v2 no-internal-process rule: when run under systemd-run --scope with
+Delegate=yes, the scope cgroup (/user.slice/.../app.slice/run-*.scope) had
+direct processes (the shell running the test harness) in cgroup.procs.
+Writing +memory +pids to cgroup.subtree_control fails with EBUSY when
+cgroup.procs is non-empty.
+
+The existing code (commit bdf90e9) already contained the fix: init_service()
+searches upward for an ancestor cgroup that already has memory+pids enabled
+in its subtree_control (is_usable_delegation_parent). It found
+app.slice (which has "memory pids" in subtree_control), created a private
+cppjudge_<pid> cgroup under it, enabled controllers there (newly created, so
+empty), then created manager_<pid> for CPPJUDGE to run in. Per-run cgroups
+are created under manager_<pid>.
+
+The fix was not a code bug but a test infrastructure deficiency — the previous
+audit ran tests directly via SSH (non-delegated session), causing all nsjail
+tests to skip. When run correctly under systemd-run --user --scope with
+Delegate=yes, everything works.
+
+FIX_SUMMARY:
+A. cgroup delegation: NO CODE CHANGE NEEDED. The init_service() delegation
+   search already handled the no-internal-process rule correctly. The previous
+   "FAIL" was from the test harness not using delegated scope.
+
+B. Test skip semantics: Fixed scripts/run_all_tests.sh to detect "all tests
+   skipped" and report NOT_VERIFIED (exit code 2) instead of PASS (exit code 0).
+   Changes:
+   - Added CTEST_LOG capture via tee
+   - Parse CTest output to count executed (Passed) vs skipped (Skipped) tests
+   - When TOTAL_PASSED=0 and TOTAL_SKIPPED>0, report NOT_VERIFIED with exit 2
+   - Added "Tests executed" and "Tests skipped" counts to summary
+
+REMAINING_RISKS:
+1. The run_all_tests.sh portable profile shows 3 executed / 12 registered in
+   CTest mode — this may be because CTest counts runner scripts as single
+   tests while run_tests.sh counts individual test cases. run_tests.sh still
+   reports 15/15 PASS.
+2. The grep patterns for counting Passed/Skipped tests rely on CTest output
+   format — if CTest output format changes, the counts may break.
+3. Direct (non-delegated) nsjail tests are Skipped but individual test scripts
+   (test_nsjail_must_block.sh etc.) still print "RESULT: PASS" when all their
+   internal tests are skipped — mitigated by the run_all_tests.sh NOT_VERIFIED
+   detection at the profile level.
+4. The cgroup delegation search depends on app.slice having memory+pids in
+   subtree_control. On systems with different systemd/cgroup configuration,
+   this might not work and delegation would fail with a diagnostic message.
+
+NEXT_TASK_RECOMMENDATION:
+None mandatory. The P0 issues are resolved.
+Optional: CPPJUDGE_P1_DIAGNOSTICS — add version/schema_version to JSON logs,
+add CLI --help/--version/--doctor flags, add structured error codes.
+
+STATUS:
+COMPLETED

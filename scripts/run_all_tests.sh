@@ -169,6 +169,10 @@ echo ""
 # ── Run tests ──────────────────────────────────────────────
 OVERALL_RC=0
 ROUND_COMPLETED=0
+TOTAL_PASSED=0
+TOTAL_SKIPPED=0
+CTEST_LOG=$(mktemp /tmp/cppjudge_ctest.XXXXXX)
+trap 'rm -f "$CTEST_LOG"' EXIT
 
 for round in $(seq 1 "$REPEAT"); do
     if [[ "$REPEAT" -gt 1 ]]; then
@@ -180,9 +184,18 @@ for round in $(seq 1 "$REPEAT"); do
         --test-dir "$BUILD_DIR" \
         -j"$JOBS" \
         --output-on-failure \
-        "${CTEST_LABEL_ARGS[@]}"
+        "${CTEST_LABEL_ARGS[@]}" 2>&1 | tee "$CTEST_LOG"
     RC=$?
     set -e
+
+    set +e
+    ROUND_PASSED=$(grep -cE "^[0-9]+/[0-9]+ Test.*Passed" "$CTEST_LOG" 2>/dev/null || true)
+    ROUND_SKIPPED=$(grep -cE "^[0-9]+/[0-9]+ Test.*Skipped" "$CTEST_LOG" 2>/dev/null || true)
+    set -e
+    ROUND_PASSED=${ROUND_PASSED:-0}
+    ROUND_SKIPPED=${ROUND_SKIPPED:-0}
+    TOTAL_PASSED=$((TOTAL_PASSED + ROUND_PASSED))
+    TOTAL_SKIPPED=$((TOTAL_SKIPPED + ROUND_SKIPPED))
 
     ROUND_COMPLETED=$round
 
@@ -217,15 +230,22 @@ echo "Build directory:        $BUILD_DIR"
 echo "Registered matching tests: $MATCH_COUNT"
 echo "Rounds completed:       $ROUND_COMPLETED / $REPEAT"
 
-if [[ $OVERALL_RC -eq 0 ]]; then
-    echo "Result: PASS"
-else
-    echo "Result: FAIL"
-    LAST_LOG="$BUILD_DIR/Testing/Temporary/LastTest.log"
-    if [[ -f "$LAST_LOG" ]]; then
-        echo "LastTest.log: $LAST_LOG"
-    fi
-fi
-echo "========================================"
+	echo "Tests executed:         $TOTAL_PASSED"
+	echo "Tests skipped:          $TOTAL_SKIPPED"
 
-exit $OVERALL_RC
+	if [[ $OVERALL_RC -ne 0 ]]; then
+	    echo "Result: FAIL"
+	    LAST_LOG="$BUILD_DIR/Testing/Temporary/LastTest.log"
+	    if [[ -f "$LAST_LOG" ]]; then
+	        echo "LastTest.log: $LAST_LOG"
+	    fi
+	elif [[ $TOTAL_PASSED -eq 0 && $TOTAL_SKIPPED -gt 0 ]]; then
+	    echo "Result: NOT_VERIFIED"
+	    echo "NOT_VERIFIED: all tests were skipped — environment may not satisfy prerequisites"
+	    OVERALL_RC=2
+	else
+	    echo "Result: PASS"
+	fi
+	echo "========================================"
+
+	exit $OVERALL_RC
