@@ -6,12 +6,18 @@ CPPJUDGE 是一个面向 Linux 的单机 C++ 判题器。它会编译提交代�
 
 ## Quick Start
 
-### 1. 构建
+### 1. 构建并检查工具
 
 ```bash
 cmake -S . -B build
 cmake --build build -j2
+
+./build/cppjudge --version
+./build/cppjudge --help
+./build/cppjudge doctor || true
 ```
+
+普通 SSH session 下 `doctor` 可能显示 `NOT_VERIFIED`，这通常表示当前 shell 不能证明 delegated cgroup 产品路径，并不等于 cppjudge 损坏。
 
 ### 2. 添加题目
 
@@ -131,7 +137,7 @@ python3 -m json.tool build/judge_log.json
 
 ## 当前范围
 
-CPPJUDGE 当前没有真正的 `import`、zip 上传、题目上传服务、Web 前端、数据库或比赛系统。题目通过目录和 `problem.json` 管理，提交通过本地文件传入。
+CPPJUDGE 当前没有真正的 `cppjudge import`、`init-problem`、`validate`、zip 上传、题目上传服务、Web 前端、数据库、比赛系统或 `cmake --install` 正式安装流程。题目通过目录和 `problem.json` 管理，提交通过本地文件传入。
 
 
 ## 诊断、版本和退出码
