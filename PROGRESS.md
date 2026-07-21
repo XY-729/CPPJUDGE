@@ -6,7 +6,7 @@
 |------|------|------------|------|
 | 阶段 1 | In Progress | ecc46d1, 43884a7 | 结构化 CE/RE/SE 主体完成；runner stderr 残留待清理 |
 | 阶段 2 | Completed | 2dae1e3 | 测试基础设施, CI, 默认初始化修复 |
-| 阶段 3 | In Progress | — | 3A cgroup v2 内存与进程控制 |
+| 阶段 3 | Completed (3A/3B/3C) | bdf90e9 | cgroup v2 + nsjail delegated + seccomp 全部集成并通过测试 |
 | 阶段 4 | Planned | — | CLI 和用户体验 |
 | 阶段 5 | Planned | — | 题目格式和日志格式 |
 | 阶段 6 | Planned | — | 安装、发布和可移植性 |
@@ -62,11 +62,11 @@ P0 (决定可靠性):
   1. [DONE] 建立真实构建和测试基线
   2. [DONE] 重构 RunInfo / CompileInfo, 结构化区分 RE 和 SE
   3. [DONE] 建立完整 verdict 回归测试
-  4. [ ] 接入 cgroup v2 内存和进程控制（← 当前任务）
-  5. [ ] 增加 seccomp
+  4. [DONE] 接入 cgroup v2 内存和进程控制
+  5. [DONE] 增加 seccomp
   6. [ ] 明确低权限用户映射
   7. [ ] 固定运行和编译 rootfs
-  8. [ ] 确保生产模式永不回退 builtin
+  8. [DONE] 确保生产模式永不回退 builtin
 
 P1 (决定易用性):
   9. [ ] cppjudge doctor

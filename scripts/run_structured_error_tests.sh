@@ -78,6 +78,15 @@ make >/dev/null 2>&1
 cd ..
 fi
 
+# Derive build directory from CPPJUDGE_BIN for linking test harnesses.
+# CTest sets CPPJUDGE_BIN to <build_dir>/cppjudge, so dirname gives us the
+# build directory containing libcppjudge_lib.a.
+if [ -n "${CPPJUDGE_BIN:-}" ]; then
+    BUILD_OBJ_DIR="${CPPJUDGE_BIN%/*}"
+else
+    BUILD_OBJ_DIR="build"
+fi
+
 # ════════════════════════════════════════════════════════════
 # Tests 1-3: stderr fake tests -> MUST be Accepted
 # ════════════════════════════════════════════════════════════
@@ -240,8 +249,7 @@ harness_log=/tmp/cppjudge_se_tests/harness_build.log
 set +e
 g++ -std=c++17 -I"$ROOT_DIR/src" \
     /tmp/cppjudge_se_tests/harness.cpp \
-    build/CMakeFiles/cppjudge_lib.dir/src/runner.cpp.o \
-    build/CMakeFiles/cppjudge_lib.dir/src/compiler.cpp.o \
+    "$BUILD_OBJ_DIR/libcppjudge_lib.a" \
     -o /tmp/cppjudge_se_tests/harness >"$harness_log" 2>&1
 harness_build_rc=$?
 set -e
